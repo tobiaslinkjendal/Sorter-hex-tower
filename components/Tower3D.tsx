@@ -1,12 +1,23 @@
 'use client';
 import { useRef, useMemo } from 'react';
 import { Canvas, ThreeEvent } from '@react-three/fiber';
+import { Text } from '@react-three/drei';
 import * as THREE from 'three';
 import { Tower, Bin, sectionAt } from '@/lib/tower-model';
-import { COLORS } from '@/lib/scheme';
+import { COLORS, LETTERS, ICONS } from '@/lib/scheme';
 import type { ReactElement } from 'react';
 
 const R = 1.25, HTOT = 2.6;
+
+// The header's always-visible id, shown as 3D text for non-color schemes.
+function columnLabel(tower: Tower, column: number): string {
+  switch (tower.scheme.columnType) {
+    case 'letter': return LETTERS[column];
+    case 'number': return String(column + 1);
+    case 'icon': return ICONS[column];
+    default: return '';
+  }
+}
 
 function faceBasis(column: number) {
   const a0 = column * Math.PI / 3, a1 = (column + 1) * Math.PI / 3;
@@ -58,6 +69,15 @@ function TowerMesh({ tower, onPick }: { tower: Tower; onPick: (b: Bin) => void }
               onClick={isHeader ? undefined : (e) => { e.stopPropagation();
                 onPick({ column, rowFromTop: row, leftRank: j + 1 }); }} />
           );
+          if (isHeader && tower.scheme.columnType !== 'color') {
+            const textPos = center.clone().addScaledVector(normal, 0.14).setY(yc);
+            out.push(
+              <Text key={`label-${column}`} position={textPos} quaternion={quat}
+                fontSize={rowH * 0.5} color="#1a2330" anchorX="center" anchorY="middle">
+                {columnLabel(tower, column)}
+              </Text>
+            );
+          }
         }
       }
     }
