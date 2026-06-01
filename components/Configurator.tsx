@@ -63,6 +63,7 @@ export default function Configurator({ scheme, onChange, appearance, onAppearanc
     appearance: Appearance; onAppearance: (a: Appearance) => void; onRandomize: () => void;
   }) {
   const [advOpen, setAdvOpen] = useState(false);
+  const [confirmRand, setConfirmRand] = useState(false);
   const set = (patch: Partial<Scheme>) => onChange({ ...scheme, ...patch });
   const setAp = (patch: Partial<Appearance>) => onAppearance({ ...appearance, ...patch });
 
@@ -175,7 +176,13 @@ export default function Configurator({ scheme, onChange, appearance, onAppearanc
             <Toggle on={appearance.colorblind} onClick={() => setAp({ colorblind: !appearance.colorblind })}>Colorblind palette</Toggle>
           </div>
 
-          <button type="button" className="ghost" style={{ width: '100%' }} onClick={onRandomize}>⚂ Randomize scheme</button>
+          <button type="button" className={confirmRand ? 'primary' : 'ghost'} style={{ width: '100%' }}
+            onClick={() => {
+              if (confirmRand) { onRandomize(); setConfirmRand(false); }
+              else { setConfirmRand(true); setTimeout(() => setConfirmRand(false), 2500); }
+            }}>
+            {confirmRand ? 'Sure? Might be messy — click again' : '⚂ Randomize scheme'}
+          </button>
         </div>
       )}
     </div>

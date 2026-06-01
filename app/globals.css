@@ -58,6 +58,8 @@ input[type="range"] { width: 100%; accent-color: #111; }
   transition: width .16s ease;
 }
 .panel.collapsed { width: 46px; }
+.panel.right { border-right: 0; border-left: 1px solid var(--line); }
+.panel.right.collapsed { width: 46px; }
 .panel-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px 14px; border-bottom: 1px solid var(--line); min-height: 52px;
@@ -84,7 +86,7 @@ input[type="range"] { width: 100%; accent-color: #111; }
 }
 .mono { font-variant-numeric: tabular-nums; font-weight: 600; }
 .stage-main { flex: 1; width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; }
-.canvas-wrap { width: 100%; max-width: 720px; }
+.canvas-wrap { width: 100%; display: flex; justify-content: center; }
 .hint { color: var(--muted); font-size: 13px; }
 
 /* Address prompt */
@@ -108,7 +110,9 @@ input[type="range"] { width: 100%; accent-color: #111; }
 /* Countdown bar (replaces the old topbar during play) */
 .countbar { position: relative; width: 100%; height: 34px; border-bottom: 1px solid var(--line); background: var(--paper); overflow: hidden; flex: none; }
 .countbar-fill { position: absolute; left: 0; top: 0; height: 100%; background: var(--ink); transition: width .1s linear; }
-.countbar-num { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #fff; mix-blend-mode: difference; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: .04em; }
+.countbar-num { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #fff; mix-blend-mode: difference; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: .04em; pointer-events: none; }
+.countbar-cancel { position: absolute; left: 0; top: 0; height: 100%; width: 42px; display: flex; align-items: center; justify-content: center; background: transparent; border: 0; color: #fff; mix-blend-mode: difference; cursor: pointer; z-index: 2; }
+.countbar-cancel:hover { background: transparent; color: #fff; }
 
 /* Green / red score above the card */
 .score { display: flex; gap: 48px; justify-content: center; align-items: baseline; font-size: 36px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1; }

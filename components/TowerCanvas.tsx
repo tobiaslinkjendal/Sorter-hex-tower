@@ -36,7 +36,9 @@ function inPoly(pt: P2, poly: P2[]): boolean {
 }
 const key = (b: Bin) => `${b.column}-${b.rowFromTop}-${b.leftRank}`;
 
-export interface TowerHandle { onCorrect: (b: Bin) => void; onWrong: (b: Bin) => void; reset: () => void; }
+export interface TowerHandle { onCorrect: (b: Bin) => void; onWrong: (b: Bin) => void; reset: () => void; twirl: () => void; }
+const TWIRL_MS = 1500, TWIRL_TURNS = -3 * 2 * Math.PI;
+const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 interface BinPoly { bin: Bin; poly: P2[]; }
 interface Props { tower: Tower; appearance: Appearance; onPick?: (b: Bin) => void; pickable?: boolean; autoSpin?: boolean; }
 
@@ -48,6 +50,7 @@ const TowerCanvas = forwardRef<TowerHandle, Props>(function TowerCanvas(
   const drag = useRef({ active: false, lastX: 0, moved: 0 });
   const greens = useRef<Map<string, number>>(new Map());
   const reds = useRef<Set<string>>(new Set());
+  const twirl = useRef<{ t0: number; from: number } | null>(null);
   const raf = useRef<number | null>(null);
   const props = useRef({ tower, appearance, autoSpin });
   props.current = { tower, appearance, autoSpin };
@@ -142,10 +145,16 @@ const TowerCanvas = forwardRef<TowerHandle, Props>(function TowerCanvas(
 
   function loop() {
     const now = performance.now();
-    if (props.current.autoSpin && !drag.current.active) theta.current -= SPIN;
+    if (twirl.current) {
+      const p = (now - twirl.current.t0) / TWIRL_MS;
+      if (p >= 1) { theta.current = twirl.current.from + TWIRL_TURNS; twirl.current = null; }
+      else theta.current = twirl.current.from + easeInOut(p) * TWIRL_TURNS;
+    } else if (props.current.autoSpin && !drag.current.active) {
+      theta.current -= SPIN;
+    }
     for (const [k, t0] of greens.current) if (now - t0 >= FADE_MS) greens.current.delete(k);
     draw();
-    if (props.current.autoSpin || greens.current.size > 0) raf.current = requestAnimationFrame(loop);
+    if (twirl.current || props.current.autoSpin || greens.current.size > 0) raf.current = requestAnimationFrame(loop);
     else raf.current = null;
   }
   function startLoop() { if (raf.current == null) raf.current = requestAnimationFrame(loop); }
@@ -154,6 +163,7 @@ const TowerCanvas = forwardRef<TowerHandle, Props>(function TowerCanvas(
     onCorrect: (b) => { reds.current.clear(); greens.current.set(key(b), performance.now()); startLoop(); },
     onWrong: (b) => { reds.current.add(key(b)); draw(); },
     reset: () => { greens.current.clear(); reds.current.clear(); draw(); },
+    twirl: () => { twirl.current = { t0: performance.now(), from: theta.current }; startLoop(); },
   }));
 
   useEffect(() => {
@@ -173,7 +183,7 @@ const TowerCanvas = forwardRef<TowerHandle, Props>(function TowerCanvas(
       ref={canvasRef}
       width={LOGW * DPR}
       height={LOGH * DPR}
-      style={{ height: `${SIZE_VH[appearance.size] ?? 52}vh`, width: 'auto', maxWidth: '100%', display: 'block', touchAction: 'none', cursor: 'grab', border: '1px solid #d8d8d8' }}
+      style={{ height: `${SIZE_VH[appearance.size] ?? 52}vh`, width: 'auto', maxWidth: '100%', display: 'block', margin: '0 auto', touchAction: 'none', cursor: 'grab' }}
       onPointerDown={(e) => { drag.current = { active: true, lastX: e.clientX, moved: 0 }; (e.target as HTMLElement).setPointerCapture(e.pointerId); }}
       onPointerMove={(e) => {
         if (!drag.current.active) return;
