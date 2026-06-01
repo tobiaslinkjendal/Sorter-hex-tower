@@ -10,7 +10,7 @@ import { buildTower, addressOf, Bin } from '@/lib/tower-model';
 import { createRound, clickBin, isOver, summarize, isValidRound, Round, Summary } from '@/lib/round-engine';
 import { playSound } from '@/lib/sound';
 
-const JUMP_APEX = 170, JUMP_END = 360, SHAKE_END = 300;
+const JUMP_APEX = 170, JUMP_END = 360, SHAKE_END = 300, TWIRL_MS = 1500;
 const rseed = () => Math.floor(Math.random() * 1e9);
 function mulberry32(seed: number) {
   return () => {
@@ -21,17 +21,19 @@ function mulberry32(seed: number) {
   };
 }
 
-type Phase = 'config' | 'play' | 'practice' | 'results';
+type Phase = 'home' | 'play' | 'practice';
 interface LRow { name: string | null; score: number; accuracy: number; scheme: Scheme }
 interface Board { overall: LRow[]; perScheme: LRow[] | null; averageScore: number; totalRounds: number }
 interface PopRow { schemeKey: string; scheme: Scheme; count: number }
+type Sum = Summary & { score: number };
 
 export default function HomePage() {
   const [scheme, setScheme] = useState<Scheme>(() => store.scheme);
   const [appearance, setAppearance] = useState<Appearance>(defaultAppearance);
   const [name, setName] = useState('');
   const [collapsed, setCollapsed] = useState(false);
-  const [phase, setPhase] = useState<Phase>('config');
+  const [resCollapsed, setResCollapsed] = useState(true);
+  const [phase, setPhase] = useState<Phase>('home');
   const [seed, setSeed] = useState(() => rseed());
   const tower = useMemo(() => buildTower(scheme, mulberry32(seed)), [scheme, seed]);
 
@@ -46,23 +48,45 @@ export default function HomePage() {
   const [anim, setAnim] = useState<{ type: 'jump' | 'shake' | null; key: number }>({ type: null, key: 0 });
 
   const [board, setBoard] = useState<Board | null>(null);
-  const [summary, setSummary] = useState<(Summary & { score: number }) | null>(null);
-  const [resCollapsed, setResCollapsed] = useState(false);
+  const [summary, setSummary] = useState<Sum | null>(null);
   const [popular, setPopular] = useState<PopRow[]>([]);
+  const [hasRun, setHasRun] = useState(false);   // a completed run with config unchanged → "Replay"
+  const [showButtons, setShowButtons] = useState(true);
+
+  const locked = phase === 'play' || phase === 'practice';
+  const inRound = locked;
 
   useEffect(() => {
     const n = localStorage.getItem('hex_name'); if (n) setName(n);
     setAppearance(loadAppearance());
     fetch('/api/popular').then(r => r.json()).then(d => setPopular(d.popular ?? [])).catch(() => {});
+    let key = '';
+    try {
+      const raw = localStorage.getItem('hex_last');
+      if (raw) { const { summary: s, schemeKey: k } = JSON.parse(raw); setSummary(s); key = k ?? ''; }
+    } catch { /* ignore */ }
+    fetch(`/api/leaderboard?schemeKey=${encodeURIComponent(key)}`).then(r => r.json()).then(setBoard).catch(() => {});
   }, []);
-  const changeAppearance = (a: Appearance) => { setAppearance(a); saveAppearance(a); };
 
+  // Esc cancels an active round.
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (phase === 'play') cancelRound();
+      else if (phase === 'practice') stopPractice();
+    };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
+
+  const changeAppearance = (a: Appearance) => { setAppearance(a); saveAppearance(a); setHasRun(false); };
   function handleScheme(next: Scheme) {
     if (next.binsPerSection !== scheme.binsPerSection || next.layers !== scheme.layers) setSeed(rseed());
-    setScheme(next);
+    setScheme(next); setHasRun(false);
   }
-  function randomize() { setScheme(randomizeScheme(Math.random)); setSeed(rseed()); }
-  function applyScheme(s: Scheme) { setScheme(s); setSeed(rseed()); setPhase('config'); setCollapsed(false); }
+  function randomize() { setScheme(randomizeScheme(Math.random)); setSeed(rseed()); setHasRun(false); }
+  function applyScheme(s: Scheme) { setScheme(s); setSeed(rseed()); setHasRun(false); setPhase('home'); setCollapsed(false); setShowButtons(true); }
 
   function begin(timed: boolean) {
     store.name = name.trim() || null; store.scheme = scheme;
@@ -75,12 +99,12 @@ export default function HomePage() {
     done.current = false;
     setCardTarget(roundRef.current.target);
     setGreen(0); setRed(0); setRemaining(appearance.durationS); setFrac(1);
-    setCollapsed(true); setPhase(timed ? 'play' : 'practice');
+    setCollapsed(true); setResCollapsed(true); setPhase(timed ? 'play' : 'practice');
     playSound('start', appearance.sound);
   }
 
-  function cancelRound() { done.current = true; setPhase('config'); setCollapsed(false); }
-  function stopPractice() { setPhase('config'); setCollapsed(false); }
+  function cancelRound() { done.current = true; setPhase('home'); setCollapsed(false); setShowButtons(true); }
+  function stopPractice() { setPhase('home'); setCollapsed(false); setShowButtons(true); }
 
   useEffect(() => {
     if (phase !== 'play') return;
@@ -108,23 +132,26 @@ export default function HomePage() {
       wrongClicks: f.wrongClicks,
       clicks: r.clicks.filter(c => c.timeMs >= (f.startMs - r.startMs) && c.timeMs <= (f.endMs - r.startMs)),
     }));
-    setSummary({ ...sum, score });
-    towerApi.current?.twirl();
-    setPhase('results'); setCollapsed(true); setResCollapsed(false);
     const key = schemeKey(scheme);
+    const finalSum: Sum = { ...sum, score };
+    setSummary(finalSum);
+    try { localStorage.setItem('hex_last', JSON.stringify({ summary: finalSum, schemeKey: key })); } catch { /* ignore */ }
+    towerApi.current?.twirl();
+    setPhase('home'); setCollapsed(true); setResCollapsed(false);
+    setHasRun(true); setShowButtons(false);
+    setTimeout(() => setShowButtons(true), TWIRL_MS);
     try {
       await fetch('/api/rounds', {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ name: store.name, scheme, durationS: appearance.durationS, summary: { ...sum, score, valid, finds } }),
       });
-      const b = await (await fetch(`/api/leaderboard?schemeKey=${encodeURIComponent(key)}`)).json();
-      setBoard(b);
+      setBoard(await (await fetch(`/api/leaderboard?schemeKey=${encodeURIComponent(key)}`)).json());
       fetch('/api/popular').then(r2 => r2.json()).then(d => setPopular(d.popular ?? [])).catch(() => {});
-    } catch { /* offline: still show local summary */ }
+    } catch { /* offline */ }
   }
 
   function onPick(bin: Bin) {
-    if ((phase !== 'play' && phase !== 'practice') || done.current) return;
+    if (!inRound || done.current) return;
     const res = clickBin(roundRef.current!, bin, performance.now());
     roundRef.current = res.state;
     if (res.correct) {
@@ -143,9 +170,9 @@ export default function HomePage() {
     }
   }
 
-  const inRound = phase === 'play' || phase === 'practice';
   const promptSegs = inRound && cardTarget ? addressOf(tower, cardTarget).segments : null;
-  const autoSpin = phase === 'config' || phase === 'results';
+  const autoSpin = phase === 'home';
+  const startLabel = `${hasRun ? 'Replay' : 'Start'} ${appearance.durationS}s`;
 
   const leaderList = (rows: LRow[] | null | undefined) => (
     <ul className="board">
@@ -167,66 +194,56 @@ export default function HomePage() {
       <aside className={`panel ${collapsed ? 'collapsed' : ''}`}>
         <div className="panel-head">
           <span className="panel-title">Hex&nbsp;Tower</span>
-          <button className="icon-btn" aria-label="toggle panel" onClick={() => setCollapsed(c => !c)}>{collapsed ? '▸' : '◂'}</button>
+          <button className="icon-btn" disabled={locked} aria-label="toggle options" onClick={() => setCollapsed(c => !c)}>{collapsed ? '▸' : '◂'}</button>
         </div>
         <div className="panel-body">
-          {phase === 'config' ? (
-            <>
-              {popular.length > 0 && (
-                <div className="cfg-row">
-                  <span className="ico">
-                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M9 2l2 4 4 .5-3 3 .8 4.5L9 16l-3.8 2 .8-4.5-3-3 4-.5z" /></svg>
-                  </span>
-                  <div className="field">
-                    <span className="label-up">Popular setups</span>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      {popular.map((p, i) => (
-                        <button key={p.schemeKey} className="ghost" style={{ flex: 1, padding: '6px 4px' }}
-                          title={`${p.scheme.order.join('→')} · ${p.scheme.columnType}/${p.scheme.layerType}/${p.scheme.binType}`}
-                          onClick={() => applyScheme(p.scheme)}>#{i + 1}<br /><span className="hint">{p.count} runs</span></button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-              <div className="cfg-row">
-                <span className="ico">
-                  <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.4">
-                    <circle cx="9" cy="6" r="3" /><path d="M3 16c0-3.3 2.7-5 6-5s6 1.7 6 5" />
-                  </svg>
-                </span>
-                <div className="field">
-                  <span className="label-up">Name (remembered)</span>
-                  <input type="text" value={name} placeholder="anonymous"
-                    onChange={e => { setName(e.target.value); localStorage.setItem('hex_name', e.target.value); }} />
+          {popular.length > 0 && (
+            <div className="cfg-row">
+              <span className="ico">
+                <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M9 2l2 4 4 .5-3 3 .8 4.5L9 16l-3.8 2 .8-4.5-3-3 4-.5z" /></svg>
+              </span>
+              <div className="field">
+                <span className="label-up">Popular setups</span>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {popular.map((p, i) => (
+                    <button key={p.schemeKey} className="ghost" style={{ flex: 1, padding: '6px 4px', lineHeight: 1.2 }}
+                      title={`${p.scheme.order.join('→')} · ${p.scheme.columnType}/${p.scheme.layerType}/${p.scheme.binType}`}
+                      onClick={() => applyScheme(p.scheme)}>#{i + 1}<br /><span className="hint">{p.count} runs</span></button>
+                  ))}
                 </div>
               </div>
-              <Configurator scheme={scheme} onChange={handleScheme} appearance={appearance}
-                onAppearance={changeAppearance} onRandomize={randomize} />
-            </>
-          ) : (
-            <p className="hint">Round in progress…</p>
+            </div>
           )}
+          <div className="cfg-row">
+            <span className="ico">
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.4">
+                <circle cx="9" cy="6" r="3" /><path d="M3 16c0-3.3 2.7-5 6-5s6 1.7 6 5" />
+              </svg>
+            </span>
+            <div className="field">
+              <span className="label-up">Name (remembered)</span>
+              <input type="text" value={name} placeholder="anonymous"
+                onChange={e => { setName(e.target.value); localStorage.setItem('hex_name', e.target.value); }} />
+            </div>
+          </div>
+          <Configurator scheme={scheme} onChange={handleScheme} appearance={appearance}
+            onAppearance={changeAppearance} onRandomize={randomize} />
         </div>
       </aside>
 
       <main className="stage">
-        {phase === 'play' ? (
+        {phase === 'play' && (
           <div className="countbar">
             <div className="countbar-fill" style={{ width: `${frac * 100}%` }} />
             <button className="countbar-cancel" onClick={cancelRound} aria-label="cancel round">✕</button>
             <span className="countbar-num">{remaining}s</span>
           </div>
-        ) : phase === 'practice' ? (
-          <div className="topbar">
-            <button onClick={stopPractice}>✕ Stop</button>
-            <span className="panel-title">Practice — untimed, not recorded</span>
-            <span />
+        )}
+        {phase === 'practice' && (
+          <div className="countbar" style={{ background: 'var(--ink)' }}>
+            <button className="countbar-cancel" onClick={stopPractice} aria-label="stop practice">✕</button>
+            <span className="countbar-num">practice</span>
           </div>
-        ) : phase === 'results' ? (
-          <div className="topbar"><span className="panel-title">Round complete</span><span className="hint">tower keeps spinning · results →</span></div>
-        ) : (
-          <div className="topbar"><span className="panel-title">Find the bin, fast.</span><span className="hint">Configure left · drag to spin</span></div>
         )}
 
         <div className="stage-main">
@@ -240,9 +257,9 @@ export default function HomePage() {
               )}
             </>
           )}
-          {phase === 'config' && (
+          {phase === 'home' && showButtons && (
             <div style={{ display: 'flex', gap: 12 }}>
-              <button className="primary start-btn" onClick={() => begin(true)}>Start ▶ {appearance.durationS}s</button>
+              <button className="primary start-btn" onClick={() => begin(true)}>{startLabel}</button>
               <button className="start-btn" onClick={() => begin(false)}>Practice</button>
             </div>
           )}
@@ -250,38 +267,33 @@ export default function HomePage() {
             <TowerCanvas ref={towerApi} tower={tower} appearance={appearance} onPick={onPick}
               pickable={inRound} autoSpin={autoSpin} />
           </div>
-          <p className="hint">{inRound ? 'Click the bin · drag to rotate' : 'Drag to spin'}</p>
         </div>
       </main>
 
-      {phase === 'results' && summary && (
-        <aside className={`panel right ${resCollapsed ? 'collapsed' : ''}`}>
-          <div className="panel-head">
-            <button className="icon-btn" aria-label="toggle results" onClick={() => setResCollapsed(c => !c)}>{resCollapsed ? '◂' : '▸'}</button>
-            <span className="panel-title">Results</span>
-          </div>
-          <div className="panel-body">
+      <aside className={`panel right ${resCollapsed ? 'collapsed' : ''}`}>
+        <div className="panel-head">
+          <button className="icon-btn" disabled={locked} aria-label="toggle results" onClick={() => setResCollapsed(c => !c)}>{resCollapsed ? '◂' : '▸'}</button>
+          <span className="panel-title">Results</span>
+        </div>
+        <div className="panel-body">
+          {summary ? (
             <div className="stat-row" style={{ marginBottom: 14 }}>
               <div className="stat"><b>{summary.findsCount}</b><span>found</span></div>
               <div className="stat"><b>{summary.score}</b><span>score /60s</span></div>
               <div className="stat"><b>{Math.round(summary.accuracy * 100)}%</b><span>accuracy</span></div>
               <div className="stat"><b>{summary.wrongClicksTotal}</b><span>wrong</span></div>
             </div>
-            {board && (
-              <p style={{ margin: '0 0 12px' }}>Average: <b className="mono">{board.averageScore.toFixed(1)}</b>
-                {summary.score > board.averageScore ? ' — you beat it.' : ''}</p>
-            )}
-            <p className="label-up">Leaderboard — overall</p>
-            {leaderList(board?.overall)}
-            <p className="label-up" style={{ marginTop: 16 }}>Leaderboard — this scheme</p>
-            {leaderList(board?.perScheme)}
-            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-              <button className="primary" style={{ flex: 1 }} onClick={() => begin(true)}>▶ Play again</button>
-              <button style={{ flex: 1 }} onClick={() => { setPhase('config'); setCollapsed(false); }}>Options</button>
-            </div>
-          </div>
-        </aside>
-      )}
+          ) : <p className="hint" style={{ marginBottom: 14 }}>Play a round to see your result here.</p>}
+          {board && summary && (
+            <p style={{ margin: '0 0 12px' }}>Average: <b className="mono">{board.averageScore.toFixed(1)}</b>
+              {summary.score > board.averageScore ? ' — you beat it.' : ''}</p>
+          )}
+          <p className="label-up">Leaderboard — overall</p>
+          {leaderList(board?.overall)}
+          <p className="label-up" style={{ marginTop: 16 }}>Leaderboard — this scheme</p>
+          {leaderList(board?.perScheme)}
+        </div>
+      </aside>
     </div>
   );
 }

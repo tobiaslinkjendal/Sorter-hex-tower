@@ -76,7 +76,11 @@ input[type="range"] { width: 100%; accent-color: #111; }
 /* Config rows */
 .cfg-row { display: grid; grid-template-columns: 18px 1fr; gap: 10px; align-items: start; margin-bottom: 14px; }
 .cfg-row .ico { margin-top: 18px; color: var(--ink); }
-.cfg-row .field { display: flex; flex-direction: column; gap: 4px; }
+.cfg-row .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.dual { display: flex; gap: 8px; }
+.dual .field { flex: 1; min-width: 0; }
+.icon-btn:disabled { opacity: .3; cursor: default; }
+.icon-btn:disabled:hover { background: var(--paper); color: var(--ink); }
 
 /* Stage */
 .stage { flex: 1; display: flex; flex-direction: column; align-items: center; min-width: 0; }

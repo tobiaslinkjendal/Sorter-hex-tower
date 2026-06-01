@@ -11,6 +11,8 @@ const BPS: BinsPerSection[] = [1, 2, 3, 4, 5, 'varied-1-2', 'varied-1-3', 'varie
 const LAYER_OPTS = [3, 4, 5, 6, 7, 8];
 const bpsLabel = (v: BinsPerSection) =>
   typeof v === 'number' ? String(v) : '✱ ' + v.replace('varied-', '').replace('-', '–');
+const TYPE_LABEL: Record<string, string> = { color: 'color', letter: 'ABC', number: '123', icon: 'icon', handed: 'handed' };
+const tl = (t: string) => TYPE_LABEL[t] ?? t;
 
 function Icon({ name }: { name: string }) {
   const c = { width: 18, height: 18, viewBox: '0 0 18 18', fill: 'none', stroke: 'currentColor', strokeWidth: 1.4 } as const;
@@ -77,14 +79,14 @@ export default function Configurator({ scheme, onChange, appearance, onAppearanc
 
       <Row icon="column" label="Column type">
         <select value={scheme.columnType} onChange={e => set({ columnType: e.target.value as Scheme['columnType'] })}>
-          {['color', 'letter', 'number', 'icon'].map(t => <option key={t}>{t}</option>)}
+          {['color', 'letter', 'number', 'icon'].map(t => <option key={t} value={t}>{tl(t)}</option>)}
         </select>
       </Row>
 
       <DualRow icon="layers">
         <Field label="Layer type">
           <select value={scheme.layerType} onChange={e => set({ layerType: e.target.value as Scheme['layerType'] })}>
-            {['letter', 'number'].map(t => <option key={t}>{t}</option>)}
+            {['letter', 'number'].map(t => <option key={t} value={t}>{tl(t)}</option>)}
           </select>
         </Field>
         <Field label="Layers">
@@ -97,7 +99,7 @@ export default function Configurator({ scheme, onChange, appearance, onAppearanc
       <DualRow icon="bin">
         <Field label="Bin type">
           <select value={scheme.binType} onChange={e => set({ binType: e.target.value as Scheme['binType'] })}>
-            {['letter', 'number', 'handed'].map(t => <option key={t}>{t}</option>)}
+            {['letter', 'number', 'handed'].map(t => <option key={t} value={t}>{tl(t)}</option>)}
           </select>
         </Field>
         <Field label="Bins / section">
