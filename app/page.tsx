@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Star, User, ArrowClockwise } from '@phosphor-icons/react';
 import Configurator from '@/components/Configurator';
 import AddressPrompt from '@/components/AddressPrompt';
 import TowerCanvas, { TowerHandle } from '@/components/TowerCanvas';
@@ -21,11 +22,12 @@ function mulberry32(seed: number) {
   };
 }
 
-type Phase = 'home' | 'play' | 'practice';
+type Phase = 'home' | 'countdown' | 'play' | 'practice';
 interface LRow { name: string | null; score: number; accuracy: number; scheme: Scheme }
-interface Board { overall: LRow[]; perScheme: LRow[] | null; averageScore: number; totalRounds: number }
+interface Board { overall: LRow[]; averageScore: number; totalRounds: number }
 interface PopRow { schemeKey: string; scheme: Scheme; count: number }
 type Sum = Summary & { score: number };
+const ic = { size: 18, weight: 'light' as const };
 
 export default function HomePage() {
   const [scheme, setScheme] = useState<Scheme>(() => store.scheme);
@@ -40,41 +42,50 @@ export default function HomePage() {
   const roundRef = useRef<Round | null>(null);
   const towerApi = useRef<TowerHandle>(null);
   const done = useRef(false);
+  const cdTimer = useRef<number | null>(null);
   const [remaining, setRemaining] = useState(60);
   const [frac, setFrac] = useState(1);
+  const [cdFrac, setCdFrac] = useState(0);
+  const [cdText, setCdText] = useState('3');
   const [cardTarget, setCardTarget] = useState<Bin | null>(null);
   const [green, setGreen] = useState(0);
   const [red, setRed] = useState(0);
   const [anim, setAnim] = useState<{ type: 'jump' | 'shake' | null; key: number }>({ type: null, key: 0 });
 
   const [board, setBoard] = useState<Board | null>(null);
+  const [schemeBoards, setSchemeBoards] = useState<Record<string, LRow[]>>({});
   const [summary, setSummary] = useState<Sum | null>(null);
   const [popular, setPopular] = useState<PopRow[]>([]);
-  const [hasRun, setHasRun] = useState(false);   // a completed run with config unchanged → "Replay"
+  const [boardTab, setBoardTab] = useState<string>('overall');
+  const [hasRun, setHasRun] = useState(false);
   const [showButtons, setShowButtons] = useState(true);
 
-  const locked = phase === 'play' || phase === 'practice';
-  const inRound = locked;
+  const locked = phase !== 'home';
+  const inRound = phase === 'play' || phase === 'practice';
+  const autoSpin = phase === 'home';
+  const startLabel = `${hasRun ? 'Replay' : 'Start'} ${appearance.durationS}s`;
+
+  async function loadBoards(pops: PopRow[]) {
+    try {
+      setBoard(await (await fetch('/api/leaderboard')).json());
+      const map: Record<string, LRow[]> = {};
+      await Promise.all(pops.map(async p => {
+        const r = await (await fetch(`/api/leaderboard?schemeKey=${encodeURIComponent(p.schemeKey)}`)).json();
+        map[p.schemeKey] = r.perScheme ?? [];
+      }));
+      setSchemeBoards(map);
+    } catch { /* offline */ }
+  }
 
   useEffect(() => {
     const n = localStorage.getItem('hex_name'); if (n) setName(n);
     setAppearance(loadAppearance());
-    fetch('/api/popular').then(r => r.json()).then(d => setPopular(d.popular ?? [])).catch(() => {});
-    let key = '';
-    try {
-      const raw = localStorage.getItem('hex_last');
-      if (raw) { const { summary: s, schemeKey: k } = JSON.parse(raw); setSummary(s); key = k ?? ''; }
-    } catch { /* ignore */ }
-    fetch(`/api/leaderboard?schemeKey=${encodeURIComponent(key)}`).then(r => r.json()).then(setBoard).catch(() => {});
+    try { const raw = localStorage.getItem('hex_last'); if (raw) setSummary(JSON.parse(raw).summary); } catch { /* ignore */ }
+    fetch('/api/popular').then(r => r.json()).then(d => { const p = d.popular ?? []; setPopular(p); loadBoards(p); }).catch(() => {});
   }, []);
 
-  // Esc cancels an active round.
   useEffect(() => {
-    const h = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      if (phase === 'play') cancelRound();
-      else if (phase === 'practice') stopPractice();
-    };
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape' && phase !== 'home') cancelAll(); };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -91,6 +102,17 @@ export default function HomePage() {
   function begin(timed: boolean) {
     store.name = name.trim() || null; store.scheme = scheme;
     if (name.trim()) localStorage.setItem('hex_name', name.trim());
+    setGreen(0); setRed(0); setCardTarget(null);
+    setCollapsed(true); setResCollapsed(true); setPhase('countdown'); setCdFrac(0); setCdText('3');
+    const t0 = performance.now();
+    cdTimer.current = window.setInterval(() => {
+      const e = (performance.now() - t0) / 1000;
+      if (e >= 3) { if (cdTimer.current) window.clearInterval(cdTimer.current); cdTimer.current = null; reallyBegin(timed); return; }
+      setCdFrac(Math.min(1, e / 3));
+      setCdText(e < 1 ? '3' : e < 2 ? '2' : e < 2.8 ? '1' : 'GO!');
+    }, 60);
+  }
+  function reallyBegin(timed: boolean) {
     const s = rseed(); setSeed(s);
     const playTower = buildTower(scheme, mulberry32(s));
     const dur = timed ? appearance.durationS * 1000 : Infinity;
@@ -98,13 +120,14 @@ export default function HomePage() {
     roundRef.current = createRound(playTower, dur, Math.random, performance.now());
     done.current = false;
     setCardTarget(roundRef.current.target);
-    setGreen(0); setRed(0); setRemaining(appearance.durationS); setFrac(1);
-    setCollapsed(true); setResCollapsed(true); setPhase(timed ? 'play' : 'practice');
+    setRemaining(appearance.durationS); setFrac(1);
+    setPhase(timed ? 'play' : 'practice');
     playSound('start', appearance.sound);
   }
-
-  function cancelRound() { done.current = true; setPhase('home'); setCollapsed(false); setShowButtons(true); }
-  function stopPractice() { setPhase('home'); setCollapsed(false); setShowButtons(true); }
+  function cancelAll() {
+    if (cdTimer.current) { window.clearInterval(cdTimer.current); cdTimer.current = null; }
+    done.current = true; setPhase('home'); setCollapsed(false); setShowButtons(true);
+  }
 
   useEffect(() => {
     if (phase !== 'play') return;
@@ -145,8 +168,8 @@ export default function HomePage() {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ name: store.name, scheme, durationS: appearance.durationS, summary: { ...sum, score, valid, finds } }),
       });
-      setBoard(await (await fetch(`/api/leaderboard?schemeKey=${encodeURIComponent(key)}`)).json());
-      fetch('/api/popular').then(r2 => r2.json()).then(d => setPopular(d.popular ?? [])).catch(() => {});
+      const p = (await (await fetch('/api/popular')).json()).popular ?? [];
+      setPopular(p); loadBoards(p);
     } catch { /* offline */ }
   }
 
@@ -170,23 +193,33 @@ export default function HomePage() {
     }
   }
 
-  const promptSegs = inRound && cardTarget ? addressOf(tower, cardTarget).segments : null;
-  const autoSpin = phase === 'home';
-  const startLabel = `${hasRun ? 'Replay' : 'Start'} ${appearance.durationS}s`;
+  const promptSegs = inRound && cardTarget ? addressOf(tower, cardTarget).segments : (phase === 'countdown' ? [] : null);
+  const rows = boardTab === 'overall' ? board?.overall : schemeBoards[boardTab];
 
-  const leaderList = (rows: LRow[] | null | undefined) => (
-    <ul className="board">
-      {(rows ?? []).map((r, i) => (
-        <li key={i} className={r.name === store.name && r.score === summary?.score ? 'me' : ''}>
-          <span>{i + 1}. {r.name ?? 'anon'}</span>
-          <span style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-            <span className="mono">{r.score} · {Math.round(r.accuracy * 100)}%</span>
-            <button className="ghost" style={{ padding: '2px 8px', fontSize: 12 }} onClick={() => applyScheme(r.scheme)}>Try this</button>
-          </span>
-        </li>
-      ))}
-      {(!rows || rows.length === 0) && <li><span className="hint">No valid rounds yet.</span><span /></li>}
-    </ul>
+  const board_ = (
+    <>
+      <div className="lb-tabs">
+        <button className={boardTab === 'overall' ? 'primary' : 'ghost'} onClick={() => setBoardTab('overall')}>Overall</button>
+        {popular.map((p, i) => (
+          <button key={p.schemeKey} className={boardTab === p.schemeKey ? 'primary' : 'ghost'}
+            title={`${p.scheme.order.join('→')} · ${p.scheme.columnType}/${p.scheme.layerType}/${p.scheme.binType}`}
+            onClick={() => setBoardTab(p.schemeKey)}>#{i + 1}</button>
+        ))}
+      </div>
+      <div className="lb">
+        <div className="lb-head"><span>#</span><span>name</span><span>score</span><span>acc</span><span /></div>
+        {(rows ?? []).map((r, i) => (
+          <div className={`lb-row ${r.name === store.name && r.score === summary?.score ? 'me' : ''}`} key={i}>
+            <span className="mono">{i + 1}</span>
+            <span className="lb-name">{r.name ?? 'anon'}</span>
+            <span className="mono">{r.score}</span>
+            <span className="mono">{Math.round(r.accuracy * 100)}%</span>
+            <button className="lb-try" title="Try this scheme" onClick={() => applyScheme(r.scheme)}><ArrowClockwise size={14} /></button>
+          </div>
+        ))}
+        {(!rows || rows.length === 0) && <div className="lb-row"><span /><span className="hint">No valid rounds yet.</span><span /><span /><span /></div>}
+      </div>
+    </>
   );
 
   return (
@@ -199,9 +232,7 @@ export default function HomePage() {
         <div className="panel-body">
           {popular.length > 0 && (
             <div className="cfg-row">
-              <span className="ico">
-                <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M9 2l2 4 4 .5-3 3 .8 4.5L9 16l-3.8 2 .8-4.5-3-3 4-.5z" /></svg>
-              </span>
+              <span className="ico"><Star {...ic} /></span>
               <div className="field">
                 <span className="label-up">Popular setups</span>
                 <div style={{ display: 'flex', gap: 6 }}>
@@ -215,11 +246,7 @@ export default function HomePage() {
             </div>
           )}
           <div className="cfg-row">
-            <span className="ico">
-              <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.4">
-                <circle cx="9" cy="6" r="3" /><path d="M3 16c0-3.3 2.7-5 6-5s6 1.7 6 5" />
-              </svg>
-            </span>
+            <span className="ico"><User {...ic} /></span>
             <div className="field">
               <span className="label-up">Name (remembered)</span>
               <input type="text" value={name} placeholder="anonymous"
@@ -232,37 +259,36 @@ export default function HomePage() {
       </aside>
 
       <main className="stage">
-        {phase === 'play' && (
-          <div className="countbar">
-            <div className="countbar-fill" style={{ width: `${frac * 100}%` }} />
-            <button className="countbar-cancel" onClick={cancelRound} aria-label="cancel round">✕</button>
-            <span className="countbar-num">{remaining}s</span>
-          </div>
-        )}
-        {phase === 'practice' && (
-          <div className="countbar" style={{ background: 'var(--ink)' }}>
-            <button className="countbar-cancel" onClick={stopPractice} aria-label="stop practice">✕</button>
-            <span className="countbar-num">practice</span>
-          </div>
-        )}
+        <div className="countbar" style={phase === 'practice' ? { background: 'var(--ink)' } : undefined}>
+          {(phase === 'play' || phase === 'countdown') && (
+            <div className="countbar-fill" style={{ width: `${(phase === 'countdown' ? cdFrac : frac) * 100}%` }} />
+          )}
+          {phase !== 'home' && <button className="countbar-cancel" onClick={cancelAll} aria-label="cancel">✕</button>}
+          {phase === 'play' && <span className="countbar-num">{remaining}s</span>}
+          {phase === 'countdown' && <span className="countbar-num">{cdText}</span>}
+          {phase === 'practice' && <span className="countbar-num">practice</span>}
+        </div>
 
         <div className="stage-main">
-          {inRound && (
-            <>
-              <div className="score"><span className="g">{green}</span><span className="r">{red}</span></div>
-              {promptSegs && (
-                <div key={anim.key} className={`card ${anim.type ?? ''}`}>
-                  <AddressPrompt segments={promptSegs} colorblind={appearance.colorblind} />
+          <div className="stage-top">
+            {phase === 'home' ? (
+              showButtons && (
+                <div style={{ display: 'flex', gap: 12 }}>
+                  <button className="primary start-btn" onClick={() => begin(true)}>{startLabel}</button>
+                  <button className="start-btn" onClick={() => begin(false)}>Practice</button>
                 </div>
-              )}
-            </>
-          )}
-          {phase === 'home' && showButtons && (
-            <div style={{ display: 'flex', gap: 12 }}>
-              <button className="primary start-btn" onClick={() => begin(true)}>{startLabel}</button>
-              <button className="start-btn" onClick={() => begin(false)}>Practice</button>
-            </div>
-          )}
+              )
+            ) : (
+              <>
+                <div className="score"><span className="g">{green}</span><span className="r">{red}</span></div>
+                {promptSegs && (
+                  <div key={anim.key} className={`card ${anim.type ?? ''}`}>
+                    <AddressPrompt segments={promptSegs} colorblind={appearance.colorblind} />
+                  </div>
+                )}
+              </>
+            )}
+          </div>
           <div className="canvas-wrap">
             <TowerCanvas ref={towerApi} tower={tower} appearance={appearance} onPick={onPick}
               pickable={inRound} autoSpin={autoSpin} />
@@ -288,10 +314,7 @@ export default function HomePage() {
             <p style={{ margin: '0 0 12px' }}>Average: <b className="mono">{board.averageScore.toFixed(1)}</b>
               {summary.score > board.averageScore ? ' — you beat it.' : ''}</p>
           )}
-          <p className="label-up">Leaderboard — overall</p>
-          {leaderList(board?.overall)}
-          <p className="label-up" style={{ marginTop: 16 }}>Leaderboard — this scheme</p>
-          {leaderList(board?.perScheme)}
+          {board_}
         </div>
       </aside>
     </div>

@@ -104,12 +104,9 @@ const TowerCanvas = forwardRef<TowerHandle, Props>(function TowerCanvas(
         }
       }
     }
-    const O: V3 = { x: 0, y: HTOT / 2, z: 0 };
-    for (let column = 0; column < 6; column++) {
-      if (tx({ x: 0, y: 1, z: 0 }, theta.current).z <= 0) break;
-      const A = hexVert(column, true), B = hexVert((column + 1) % 6, true);
-      const pts = [O, A, B].map(p => proj(tx(p, theta.current)));
-      const depth = tx({ x: (A.x + B.x) / 3, y: HTOT / 2, z: (A.z + B.z) / 3 }, theta.current).z;
+    if (tx({ x: 0, y: 1, z: 0 }, theta.current).z > 0) {     // top cap: one clean hexagon
+      const pts = [0, 1, 2, 3, 4, 5].map(i => proj(tx(hexVert(i, true), theta.current)));
+      const depth = tx({ x: 0, y: HTOT / 2, z: 0 }, theta.current).z;
       polys.push({ z: depth, kind: 'cap', pts, bright: 1 });
     }
 
@@ -121,8 +118,7 @@ const TowerCanvas = forwardRef<TowerHandle, Props>(function TowerCanvas(
       o.pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
       ctx.closePath();
       if (o.kind === 'cap') {
-        ctx.fillStyle = shadeHex('#ffffff', o.bright, ap.solid); ctx.fill();
-        ctx.lineWidth = 1.2; ctx.strokeStyle = '#111'; ctx.stroke();
+        ctx.fillStyle = ap.headerColor; ctx.fill();   // top color, no outline
       } else if (o.kind === 'header') {
         const ci = columnDisplayIndex(o.column!);
         ctx.fillStyle = tw.scheme.columnType === 'color' ? shadeHex(palette[ci], o.bright, ap.solid) : shadeHex(ap.headerColor, o.bright, ap.solid);
@@ -172,6 +168,22 @@ const TowerCanvas = forwardRef<TowerHandle, Props>(function TowerCanvas(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tower, appearance, autoSpin]);
   useEffect(() => () => { if (raf.current != null) cancelAnimationFrame(raf.current); }, []);
+
+  // Scroll-wheel rotation (opt-in). Native listener so we can preventDefault.
+  useEffect(() => {
+    const cv = canvasRef.current; if (!cv) return;
+    const onWheel = (e: WheelEvent) => {
+      const ap = props.current.appearance;
+      if (!ap.scrollRotate) return;
+      e.preventDefault();
+      const step = 0.15 * (ap.sensitivity ?? 1);
+      theta.current += (ap.scrollDir === 'up' ? -1 : 1) * Math.sign(e.deltaY) * step;
+      draw();
+    };
+    cv.addEventListener('wheel', onWheel, { passive: false });
+    return () => cv.removeEventListener('wheel', onWheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function toLogical(e: React.PointerEvent): P2 {
     const rect = canvasRef.current!.getBoundingClientRect();

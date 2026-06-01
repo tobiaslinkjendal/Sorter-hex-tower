@@ -12,12 +12,15 @@ export interface Appearance {
   placement: Placement;  // tower vertical placement
   sound: boolean;        // sound effects on/off
   durationS: number;     // round length in seconds (30/60/90)
+  scrollRotate: boolean; // use the scroll wheel to rotate
+  scrollDir: 'up' | 'down'; // which scroll direction spins which way
 }
 
 export function defaultAppearance(): Appearance {
   return {
     solid: false, colorblind: false, headerColor: '#dddddd', binColor: '#ffffff',
     sensitivity: 1, size: 'm', placement: 'mid', sound: false, durationS: 60,
+    scrollRotate: false, scrollDir: 'up',
   };
 }
 

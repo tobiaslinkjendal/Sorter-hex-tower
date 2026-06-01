@@ -5,12 +5,12 @@ export async function GET(req: NextRequest) {
   const schemeKey = req.nextUrl.searchParams.get('schemeKey');
   const sb = serverSupabase();
   const overall = await sb.from('rounds').select('name,score,accuracy,scheme,scheme_key,created_at')
-    .eq('valid', true).order('score', { ascending: false }).limit(20);
+    .eq('valid', true).order('score', { ascending: false }).limit(10);
   let perScheme = null;
   if (schemeKey) {
     perScheme = (await sb.from('rounds').select('name,score,accuracy,scheme,created_at')
       .eq('valid', true).eq('scheme_key', schemeKey)
-      .order('score', { ascending: false }).limit(20)).data;
+      .order('score', { ascending: false }).limit(10)).data;
   }
   const all = await sb.from('rounds').select('score').eq('valid', true);
   const scores = (all.data ?? []).map(r => r.score);
