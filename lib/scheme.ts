@@ -55,9 +55,14 @@ export function defaultScheme(): Scheme {
   };
 }
 
+// Columns read A→B→C… in spin order. The displayed id reverses the physical face
+// index so the labels increase the way the tower turns. MUST match TowerCanvas.
+export function columnDisplayIndex(column0: number): number { return 5 - column0; }
+
 export function columnSegment(s: Scheme, column0: number): Segment {
-  if (s.columnType === 'color') return { kind: 'color', value: COLORS[column0 % COLORS.length] };
-  return { kind: 'text', value: symbol(s.columnType, column0 + 1) };
+  const c = columnDisplayIndex(column0);
+  if (s.columnType === 'color') return { kind: 'color', value: COLORS[c % COLORS.length] };
+  return { kind: 'text', value: symbol(s.columnType, c + 1) };
 }
 
 export function layerSegment(s: Scheme, rowFromTop: number, layers: number): Segment {
@@ -90,8 +95,8 @@ export function randomizeScheme(rng: RNG): Scheme {
   return {
     order: pick(rng, orders) as [Dim,Dim,Dim],
     columnType: pick(rng, ['color','letter','number','icon'] as ColumnType[]),
-    layerType: pick(rng, ['letter','number','icon'] as LayerType[]),
-    binType: pick(rng, ['letter','number','icon','handed'] as BinType[]),
+    layerType: pick(rng, ['letter','number'] as LayerType[]),
+    binType: pick(rng, ['letter','number','handed'] as BinType[]),
     layerFrom: pick(rng, ['top','bottom'] as VDir[]),
     binFrom: pick(rng, ['left','right'] as HDir[]),
     layers: 3 + Math.floor(rng() * 6),

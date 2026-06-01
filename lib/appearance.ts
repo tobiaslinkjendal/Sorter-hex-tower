@@ -1,13 +1,24 @@
-// Visual-only preferences. Kept OUT of Scheme so they never fragment leaderboards.
+// Visual / interaction preferences. Kept OUT of Scheme so they never fragment leaderboards.
+export type Size = 's' | 'm' | 'l';
+export type Placement = 'high' | 'mid' | 'low';
+
 export interface Appearance {
   solid: boolean;        // shaded "solid" look vs flat blueprint
   colorblind: boolean;   // swap to the colorblind-safe palette
   headerColor: string;   // header background when column type is NOT color
-  binColor: string;      // bin background
+  binColor: string;      // bin background (always applies)
+  sensitivity: number;   // drag-to-spin multiplier (0.4–2)
+  size: Size;            // tower display size
+  placement: Placement;  // tower vertical placement
+  sound: boolean;        // sound effects on/off
+  durationS: number;     // round length in seconds (30/60/90)
 }
 
 export function defaultAppearance(): Appearance {
-  return { solid: false, colorblind: false, headerColor: '#dddddd', binColor: '#ffffff' };
+  return {
+    solid: false, colorblind: false, headerColor: '#dddddd', binColor: '#ffffff',
+    sensitivity: 1, size: 'm', placement: 'mid', sound: false, durationS: 60,
+  };
 }
 
 const KEY = 'hex_appearance';

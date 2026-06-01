@@ -5,14 +5,14 @@ import Configurator from '@/components/Configurator';
 import AddressPrompt from '@/components/AddressPrompt';
 import TowerCanvas, { TowerHandle } from '@/components/TowerCanvas';
 import { store } from '@/lib/store';
-import { Scheme, schemeKey } from '@/lib/scheme';
+import { Scheme, schemeKey, randomizeScheme } from '@/lib/scheme';
 import { Appearance, defaultAppearance, loadAppearance, saveAppearance } from '@/lib/appearance';
 import { buildTower, addressOf, Bin } from '@/lib/tower-model';
 import { createRound, clickBin, isOver, summarize, isValidRound, Round } from '@/lib/round-engine';
+import { playSound } from '@/lib/sound';
 
-const DURATION = 60000;
 const JUMP_APEX = 170, JUMP_END = 360, SHAKE_END = 300;
-
+const rseed = () => Math.floor(Math.random() * 1e9);
 function mulberry32(seed: number) {
   return () => {
     seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
@@ -22,14 +22,16 @@ function mulberry32(seed: number) {
   };
 }
 
+type Phase = 'config' | 'play' | 'practice';
+
 export default function HomePage() {
   const router = useRouter();
   const [scheme, setScheme] = useState<Scheme>(() => store.scheme);
   const [appearance, setAppearance] = useState<Appearance>(defaultAppearance);
   const [name, setName] = useState('');
   const [collapsed, setCollapsed] = useState(false);
-  const [phase, setPhase] = useState<'config' | 'play'>('config');
-  const [seed] = useState(() => Math.floor(Math.random() * 1e9));
+  const [phase, setPhase] = useState<Phase>('config');
+  const [seed, setSeed] = useState(() => rseed());
   const tower = useMemo(() => buildTower(scheme, mulberry32(seed)), [scheme, seed]);
 
   const roundRef = useRef<Round | null>(null);
@@ -45,23 +47,38 @@ export default function HomePage() {
   useEffect(() => { const n = localStorage.getItem('hex_name'); if (n) setName(n); setAppearance(loadAppearance()); }, []);
   const changeAppearance = (a: Appearance) => { setAppearance(a); saveAppearance(a); };
 
-  function start() {
+  // Re-randomize the tower layout when geometry changes (so "✱" bins are truly random).
+  function handleScheme(next: Scheme) {
+    if (next.binsPerSection !== scheme.binsPerSection || next.layers !== scheme.layers) setSeed(rseed());
+    setScheme(next);
+  }
+  function randomize() { setScheme(randomizeScheme(Math.random)); setSeed(rseed()); }
+
+  function begin(timed: boolean) {
     store.name = name.trim() || null; store.scheme = scheme;
     if (name.trim()) localStorage.setItem('hex_name', name.trim());
+    const s = rseed(); setSeed(s);                              // replay re-randomizes
+    const playTower = buildTower(scheme, mulberry32(s));
+    const dur = timed ? appearance.durationS * 1000 : Infinity;
     towerApi.current?.reset();
-    const r = createRound(tower, DURATION, Math.random, performance.now());
-    roundRef.current = r; done.current = false;
-    setCardTarget(r.target); setGreen(0); setRed(0); setRemaining(60); setFrac(1);
-    setCollapsed(true); setPhase('play');
+    roundRef.current = createRound(playTower, dur, Math.random, performance.now());
+    done.current = false;
+    setCardTarget(roundRef.current.target);
+    setGreen(0); setRed(0); setRemaining(appearance.durationS); setFrac(1);
+    setCollapsed(true); setPhase(timed ? 'play' : 'practice');
+    playSound('start', appearance.sound);
   }
+
+  function stopPractice() { setPhase('config'); setCollapsed(false); }
 
   useEffect(() => {
     if (phase !== 'play') return;
+    const dur = appearance.durationS * 1000;
     const id = setInterval(() => {
       const now = performance.now(); const r = roundRef.current!;
-      const left = DURATION - (now - r.startMs);
+      const left = dur - (now - r.startMs);
       setRemaining(Math.max(0, Math.ceil(left / 1000)));
-      setFrac(Math.max(0, left / DURATION));
+      setFrac(Math.max(0, left / dur));
       if (isOver(r, now) && !done.current) finish();
     }, 100);
     return () => clearInterval(id);
@@ -70,35 +87,39 @@ export default function HomePage() {
 
   async function finish() {
     done.current = true;
+    playSound('finish', appearance.sound);
     const r = roundRef.current!;
     const summary = summarize(r);
     const valid = isValidRound(summary);
+    const score = Math.round(summary.findsCount * 60 / appearance.durationS); // normalize to 60s
     const finds = r.finds.map((f, i) => ({
       seq: i, target: f.target, targetDisplay: f.targetDisplay, timeMs: f.endMs - f.startMs,
       wrongClicks: f.wrongClicks,
       clicks: r.clicks.filter(c => c.timeMs >= (f.startMs - r.startMs) && c.timeMs <= (f.endMs - r.startMs)),
     }));
-    store.lastSummary = summary; store.lastSchemeKey = schemeKey(scheme);
+    store.lastSummary = { ...summary, score }; store.lastSchemeKey = schemeKey(scheme);
     try {
       await fetch('/api/rounds', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name: store.name, scheme, durationS: 60, summary: { ...summary, valid, finds } }),
+        body: JSON.stringify({ name: store.name, scheme, durationS: appearance.durationS, summary: { ...summary, score, valid, finds } }),
       });
     } catch { /* offline: results page still shows local summary */ }
     router.push('/results');
   }
 
   function onPick(bin: Bin) {
-    if (phase !== 'play' || done.current) return;
+    if ((phase !== 'play' && phase !== 'practice') || done.current) return;
     const res = clickBin(roundRef.current!, bin, performance.now());
     roundRef.current = res.state;
     if (res.correct) {
+      playSound('correct', appearance.sound);
       towerApi.current?.onCorrect(bin);
       setAnim(a => ({ type: 'jump', key: a.key + 1 }));
       const next = res.state.target;
       setTimeout(() => { setCardTarget(next); setGreen(g => g + 1); }, JUMP_APEX);
       setTimeout(() => setAnim(a => ({ type: null, key: a.key })), JUMP_END);
     } else {
+      playSound('wrong', appearance.sound);
       towerApi.current?.onWrong(bin);
       setRed(r => r + 1);
       setAnim(a => ({ type: 'shake', key: a.key + 1 }));
@@ -106,8 +127,8 @@ export default function HomePage() {
     }
   }
 
-  const playing = phase === 'play';
-  const promptSegs = playing && cardTarget ? addressOf(tower, cardTarget).segments : null;
+  const inRound = phase === 'play' || phase === 'practice';
+  const promptSegs = inRound && cardTarget ? addressOf(tower, cardTarget).segments : null;
 
   return (
     <div className="app">
@@ -119,7 +140,7 @@ export default function HomePage() {
           </button>
         </div>
         <div className="panel-body">
-          {!playing ? (
+          {phase === 'config' ? (
             <>
               <div className="cfg-row">
                 <span className="ico">
@@ -133,7 +154,8 @@ export default function HomePage() {
                     onChange={e => { setName(e.target.value); localStorage.setItem('hex_name', e.target.value); }} />
                 </div>
               </div>
-              <Configurator scheme={scheme} onChange={setScheme} appearance={appearance} onAppearance={changeAppearance} />
+              <Configurator scheme={scheme} onChange={handleScheme} appearance={appearance}
+                onAppearance={changeAppearance} onRandomize={randomize} />
             </>
           ) : (
             <p className="hint">Round in progress…</p>
@@ -142,10 +164,15 @@ export default function HomePage() {
       </aside>
 
       <main className="stage">
-        {playing ? (
+        {phase === 'play' ? (
           <div className="countbar">
             <div className="countbar-fill" style={{ width: `${frac * 100}%` }} />
             <span className="countbar-num">{remaining}s</span>
+          </div>
+        ) : phase === 'practice' ? (
+          <div className="topbar">
+            <span className="panel-title">Practice — untimed, not recorded</span>
+            <button onClick={stopPractice}>■ Stop</button>
           </div>
         ) : (
           <div className="topbar">
@@ -155,7 +182,7 @@ export default function HomePage() {
         )}
 
         <div className="stage-main">
-          {playing ? (
+          {inRound ? (
             <>
               <div className="score"><span className="g">{green}</span><span className="r">{red}</span></div>
               {promptSegs && (
@@ -165,13 +192,17 @@ export default function HomePage() {
               )}
             </>
           ) : (
-            <button className="primary start-btn" onClick={start}>Start ▶ 60s</button>
+            <div style={{ display: 'flex', gap: 12 }}>
+              <button className="primary start-btn" onClick={() => begin(true)}>Start ▶ {appearance.durationS}s</button>
+              <button className="start-btn" onClick={() => begin(false)}>Practice</button>
+            </div>
           )}
 
           <div className="canvas-wrap">
-            <TowerCanvas ref={towerApi} tower={tower} appearance={appearance} onPick={onPick} pickable={playing} />
+            <TowerCanvas ref={towerApi} tower={tower} appearance={appearance} onPick={onPick}
+              pickable={inRound} autoSpin={phase === 'config'} />
           </div>
-          <p className="hint">{playing ? 'Click the bin · drag to rotate' : 'Live preview — set it up, then Start'}</p>
+          <p className="hint">{inRound ? 'Click the bin · drag to rotate' : 'Live preview — set it up, then Start'}</p>
         </div>
       </main>
     </div>
