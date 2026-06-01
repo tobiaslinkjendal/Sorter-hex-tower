@@ -5,7 +5,7 @@ import Configurator from '@/components/Configurator';
 import AddressPrompt from '@/components/AddressPrompt';
 import TowerCanvas, { TowerHandle } from '@/components/TowerCanvas';
 import { store } from '@/lib/store';
-import { Scheme, schemeKey, randomizeScheme } from '@/lib/scheme';
+import { Scheme, Segment, schemeKey, randomizeScheme } from '@/lib/scheme';
 import { Appearance, defaultAppearance, loadAppearance, saveAppearance } from '@/lib/appearance';
 import { buildTower, addressOf, Bin } from '@/lib/tower-model';
 import { createRound, clickBin, isOver, summarize, isValidRound, Round, Summary } from '@/lib/round-engine';
@@ -29,6 +29,18 @@ interface PopRow { schemeKey: string; scheme: Scheme; count: number }
 type Sum = Summary & { score: number };
 const ic = { size: 18, weight: 'light' as const };
 
+// Filled-in placeholder address for the home preview and the countdown.
+function placeholderSegments(s: Scheme): Segment[] {
+  const ph = (type: string): Segment => {
+    if (type === 'color') return { kind: 'color', value: '#FFBCCD' };
+    if (type === 'number') return { kind: 'text', value: '0' };
+    if (type === 'icon') return { kind: 'text', value: '?' };
+    return { kind: 'text', value: 'x' }; // letter / handed
+  };
+  const map: Record<string, string> = { column: s.columnType, layer: s.layerType, bin: s.binType };
+  return s.order.map(d => ph(map[d]));
+}
+
 export default function HomePage() {
   const [scheme, setScheme] = useState<Scheme>(() => store.scheme);
   const [appearance, setAppearance] = useState<Appearance>(defaultAppearance);
@@ -42,7 +54,7 @@ export default function HomePage() {
   const roundRef = useRef<Round | null>(null);
   const towerApi = useRef<TowerHandle>(null);
   const done = useRef(false);
-  const cdTimer = useRef<number | null>(null);
+  const cdTimeouts = useRef<number[]>([]);
   const [remaining, setRemaining] = useState(60);
   const [frac, setFrac] = useState(1);
   const [cdFrac, setCdFrac] = useState(0);
@@ -62,7 +74,7 @@ export default function HomePage() {
 
   const locked = phase !== 'home';
   const inRound = phase === 'play' || phase === 'practice';
-  const autoSpin = phase === 'home';
+  const autoSpin = phase === 'home' && appearance.autospin;
   const startLabel = `${hasRun ? 'Replay' : 'Start'} ${appearance.durationS}s`;
 
   async function loadBoards(pops: PopRow[]) {
@@ -104,13 +116,14 @@ export default function HomePage() {
     if (name.trim()) localStorage.setItem('hex_name', name.trim());
     setGreen(0); setRed(0); setCardTarget(null);
     setCollapsed(true); setResCollapsed(true); setPhase('countdown'); setCdFrac(0); setCdText('3');
-    const t0 = performance.now();
-    cdTimer.current = window.setInterval(() => {
-      const e = (performance.now() - t0) / 1000;
-      if (e >= 3) { if (cdTimer.current) window.clearInterval(cdTimer.current); cdTimer.current = null; reallyBegin(timed); return; }
-      setCdFrac(Math.min(1, e / 3));
-      setCdText(e < 1 ? '3' : e < 2 ? '2' : e < 2.8 ? '1' : 'GO!');
-    }, 60);
+    // Stepped fill: each step ramps in ~100ms (CSS transition) then holds ~900ms.
+    cdTimeouts.current = [
+      window.setTimeout(() => setCdFrac(0.33), 20),
+      window.setTimeout(() => { setCdFrac(0.66); setCdText('2'); }, 1000),
+      window.setTimeout(() => { setCdFrac(1); setCdText('1'); }, 2000),
+      window.setTimeout(() => setCdText('GO!'), 3000),
+      window.setTimeout(() => reallyBegin(timed), 3400),
+    ];
   }
   function reallyBegin(timed: boolean) {
     const s = rseed(); setSeed(s);
@@ -125,7 +138,7 @@ export default function HomePage() {
     playSound('start', appearance.sound);
   }
   function cancelAll() {
-    if (cdTimer.current) { window.clearInterval(cdTimer.current); cdTimer.current = null; }
+    cdTimeouts.current.forEach(t => window.clearTimeout(t)); cdTimeouts.current = [];
     done.current = true; setPhase('home'); setCollapsed(false); setShowButtons(true);
   }
 
@@ -193,7 +206,7 @@ export default function HomePage() {
     }
   }
 
-  const promptSegs = inRound && cardTarget ? addressOf(tower, cardTarget).segments : (phase === 'countdown' ? [] : null);
+  const cardSegs = inRound && cardTarget ? addressOf(tower, cardTarget).segments : placeholderSegments(scheme);
   const rows = boardTab === 'overall' ? board?.overall : schemeBoards[boardTab];
 
   const board_ = (
@@ -271,22 +284,15 @@ export default function HomePage() {
 
         <div className="stage-main">
           <div className="stage-top">
-            {phase === 'home' ? (
-              showButtons && (
-                <div style={{ display: 'flex', gap: 12 }}>
-                  <button className="primary start-btn" onClick={() => begin(true)}>{startLabel}</button>
-                  <button className="start-btn" onClick={() => begin(false)}>Practice</button>
-                </div>
-              )
-            ) : (
-              <>
-                <div className="score"><span className="g">{green}</span><span className="r">{red}</span></div>
-                {promptSegs && (
-                  <div key={anim.key} className={`card ${anim.type ?? ''}`}>
-                    <AddressPrompt segments={promptSegs} colorblind={appearance.colorblind} />
-                  </div>
-                )}
-              </>
+            {phase !== 'home' && <div className="score"><span className="g">{green}</span><span className="r">{red}</span></div>}
+            <div key={anim.key} className={`card ${anim.type ?? ''}`}>
+              <AddressPrompt segments={cardSegs} colorblind={appearance.colorblind} />
+            </div>
+            {phase === 'home' && showButtons && (
+              <div style={{ display: 'flex', gap: 12 }}>
+                <button className="primary start-btn" onClick={() => begin(true)}>{startLabel}</button>
+                <button className="start-btn" onClick={() => begin(false)}>Practice</button>
+              </div>
             )}
           </div>
           <div className="canvas-wrap">

@@ -14,13 +14,14 @@ export interface Appearance {
   durationS: number;     // round length in seconds (30/60/90)
   scrollRotate: boolean; // use the scroll wheel to rotate
   scrollDir: 'up' | 'down'; // which scroll direction spins which way
+  autospin: boolean;     // slowly spin the tower while idle on the home screen
 }
 
 export function defaultAppearance(): Appearance {
   return {
     solid: false, colorblind: false, headerColor: '#dddddd', binColor: '#ffffff',
     sensitivity: 1, size: 'm', placement: 'mid', sound: false, durationS: 60,
-    scrollRotate: false, scrollDir: 'up',
+    scrollRotate: false, scrollDir: 'up', autospin: true,
   };
 }
 

@@ -173,6 +173,7 @@ export default function Configurator({ scheme, onChange, appearance, onAppearanc
           <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
             <Toggle on={appearance.solid} onClick={() => setAp({ solid: !appearance.solid })}>Solid (shaded) mode</Toggle>
             <Toggle on={appearance.colorblind} onClick={() => setAp({ colorblind: !appearance.colorblind })}>Colorblind palette</Toggle>
+            <Toggle on={appearance.autospin} onClick={() => setAp({ autospin: !appearance.autospin })}>Auto-spin tower</Toggle>
           </div>
 
           <button type="button" className={confirmRand ? 'primary' : 'ghost'} style={{ width: '100%' }}

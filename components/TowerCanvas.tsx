@@ -118,7 +118,8 @@ const TowerCanvas = forwardRef<TowerHandle, Props>(function TowerCanvas(
       o.pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
       ctx.closePath();
       if (o.kind === 'cap') {
-        ctx.fillStyle = ap.headerColor; ctx.fill();   // top color, no outline
+        ctx.fillStyle = ap.headerColor; ctx.fill();   // top color
+        ctx.lineWidth = 1.4; ctx.strokeStyle = '#111'; ctx.stroke(); // outer hexagon outline only
       } else if (o.kind === 'header') {
         const ci = columnDisplayIndex(o.column!);
         ctx.fillStyle = tw.scheme.columnType === 'color' ? shadeHex(palette[ci], o.bright, ap.solid) : shadeHex(ap.headerColor, o.bright, ap.solid);
