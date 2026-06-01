@@ -23,6 +23,15 @@ export type Segment = { kind: 'text'; value: string } | { kind: 'color'; value: 
 export const LETTERS = 'ABCDEFGH';
 export const ICONS = ['★','●','▲','■','◆','✚','♥','♦'];
 export const COLORS = ['#e0524a','#e08a3c','#e8d24a','#6db86d','#5aa9e0','#9b6ee0'];
+// Okabe–Ito based palette, chosen to stay distinguishable for color-vision deficiency.
+export const COLORS_CB = ['#d55e00','#56b4e9','#009e73','#f0e442','#0072b2','#cc79a7'];
+
+// Map a canonical COLORS hex to its colorblind-safe equivalent (by index) for display.
+export function toPalette(hex: string, colorblind: boolean): string {
+  if (!colorblind) return hex;
+  const i = COLORS.indexOf(hex);
+  return i >= 0 ? COLORS_CB[i] : hex;
+}
 
 const HANDED: Record<number, string[]> = {
   1: ['M'], 2: ['L','R'], 3: ['L','M','R'],

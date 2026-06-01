@@ -1,20 +1,31 @@
 'use client';
-import { useEffect, useRef } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import { Tower, Bin, sectionAt } from '@/lib/tower-model';
-import { COLORS, LETTERS, ICONS } from '@/lib/scheme';
+import { COLORS, COLORS_CB, LETTERS, ICONS } from '@/lib/scheme';
+import { Appearance } from '@/lib/appearance';
 
 const LOGW = 720, LOGH = 600, DPR = 2;
 const cx = LOGW / 2, cy = LOGH / 2 + 36, scale = 150;
 const R = 1.25, HTOT = 2.6, PHI = 0.42;
+const GREEN = [31, 157, 58], RED = '#d12f2f', FADE_MS = 1000;
 
 type V3 = { x: number; y: number; z: number };
 type P2 = { x: number; y: number };
 const rotY = (p: V3, a: number): V3 => ({ x: p.x * Math.cos(a) + p.z * Math.sin(a), y: p.y, z: -p.x * Math.sin(a) + p.z * Math.cos(a) });
 const rotX = (p: V3, a: number): V3 => ({ x: p.x, y: p.y * Math.cos(a) - p.z * Math.sin(a), z: p.y * Math.sin(a) + p.z * Math.cos(a) });
-const tx = (p: V3, theta: number): V3 => rotX(rotY(p, theta), PHI);
+const tx = (p: V3, t: number): V3 => rotX(rotY(p, t), PHI);
 const proj = (p: V3): P2 => ({ x: cx + p.x * scale, y: cy - p.y * scale });
 const lerp3 = (a: V3, b: V3, t: number): V3 => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t });
 const hexVert = (i: number, top: boolean): V3 => ({ x: R * Math.cos(i * Math.PI / 3), y: top ? HTOT / 2 : -HTOT / 2, z: R * Math.sin(i * Math.PI / 3) });
+
+const hex2rgb = (h: string): number[] => { const s = h.replace('#', ''); return [0, 2, 4].map(i => parseInt(s.slice(i, i + 2) || '0', 16)); };
+const css = (r: number[]) => `rgb(${r[0] | 0},${r[1] | 0},${r[2] | 0})`;
+const mix = (a: number[], b: number[], t: number) => a.map((v, i) => v + (b[i] - v) * t);
+function shade(hex: string, brightness: number, solid: boolean) {
+  if (!solid) return hex;
+  const base = hex2rgb(hex);
+  return css(mix([0, 0, 0], base, 0.55 + 0.45 * Math.max(0, Math.min(1, brightness))));
+}
 
 function inPoly(pt: P2, poly: P2[]): boolean {
   let inside = false;
@@ -25,36 +36,61 @@ function inPoly(pt: P2, poly: P2[]): boolean {
   return inside;
 }
 
-interface BinPoly { bin: Bin; poly: P2[]; }
+const key = (b: Bin) => `${b.column}-${b.rowFromTop}-${b.leftRank}`;
 
-export default function TowerCanvas({ tower, onPick, pickable = true }:
-  { tower: Tower; onPick?: (b: Bin) => void; pickable?: boolean }) {
+export interface TowerHandle { onCorrect: (b: Bin) => void; onWrong: (b: Bin) => void; reset: () => void; }
+interface BinPoly { bin: Bin; poly: P2[]; }
+interface Props { tower: Tower; appearance: Appearance; onPick?: (b: Bin) => void; pickable?: boolean; }
+
+const TowerCanvas = forwardRef<TowerHandle, Props>(function TowerCanvas(
+  { tower, appearance, onPick, pickable = true }, ref) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const theta = useRef(0.5);
-  const binPolys = useRef<BinPoly[]>([]);   // far -> near draw order
+  const binPolys = useRef<BinPoly[]>([]);
   const drag = useRef({ active: false, lastX: 0, moved: 0 });
+  const greens = useRef<Map<string, number>>(new Map()); // key -> start time
+  const reds = useRef<Set<string>>(new Set());
+  const raf = useRef<number | null>(null);
+  const props = useRef({ tower, appearance });
+  props.current = { tower, appearance };
+
+  function binFill(b: Bin, brightness: number): string {
+    const k = key(b);
+    if (reds.current.has(k)) return RED;
+    const ap = props.current.appearance;
+    const factor = ap.solid ? 0.55 + 0.45 * Math.max(0, Math.min(1, brightness)) : 1;
+    const baseRgb = mix([0, 0, 0], hex2rgb(ap.binColor), factor);
+    const t0 = greens.current.get(k);
+    if (t0 != null) {
+      const a = Math.max(0, 1 - (performance.now() - t0) / FADE_MS); // 1 -> 0
+      return css(mix(baseRgb, GREEN, a));
+    }
+    return css(baseRgb);
+  }
 
   function draw() {
     const cv = canvasRef.current; if (!cv) return;
     const ctx = cv.getContext('2d'); if (!ctx) return;
+    const { tower: tw, appearance: ap } = props.current;
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     ctx.clearRect(0, 0, LOGW, LOGH);
     ctx.lineJoin = 'miter'; ctx.lineCap = 'butt';
 
-    const rows = tower.layers + 1;             // row 0 = header
-    type Poly = { z: number; kind: 'cap' | 'header' | 'bin'; pts: P2[]; column?: number; row?: number; leftRank?: number };
+    const rows = tw.layers + 1;
+    type Poly = { z: number; kind: 'cap' | 'header' | 'bin'; pts: P2[]; column?: number; row?: number; leftRank?: number; bright: number };
     const polys: Poly[] = [];
 
     for (let column = 0; column < 6; column++) {
       const nA = (column + 0.5) * Math.PI / 3;
       const n = tx({ x: Math.cos(nA), y: 0, z: Math.sin(nA) }, theta.current);
-      if (n.z <= 0.02) continue;               // back-face cull
+      if (n.z <= 0.02) continue;
+      const bright = n.z;
       const tA = hexVert(column, true), tB = hexVert((column + 1) % 6, true);
       const bA = hexVert(column, false), bB = hexVert((column + 1) % 6, false);
       for (let row = 0; row < rows; row++) {
         const v0 = row / rows, v1 = (row + 1) / rows;
         const isHeader = row === 0;
-        const count = isHeader ? 1 : sectionAt(tower, column, row).binCount;
+        const count = isHeader ? 1 : sectionAt(tw, column, row).binCount;
         for (let j = 0; j < count; j++) {
           const u0 = j / count, u1 = (j + 1) / count;
           const pts = [
@@ -64,55 +100,71 @@ export default function TowerCanvas({ tower, onPick, pickable = true }:
             proj(tx(lerp3(lerp3(tA, tB, u0), lerp3(bA, bB, u0), v1), theta.current)),
           ];
           const depth = tx(lerp3(lerp3(tA, tB, (u0 + u1) / 2), lerp3(bA, bB, (u0 + u1) / 2), (v0 + v1) / 2), theta.current).z;
-          // leftRank: calibrated so rank 1 is the viewer's left when facing the column
-          polys.push({ z: depth, kind: isHeader ? 'header' : 'bin', pts, column, row, leftRank: isHeader ? undefined : count - j });
+          polys.push({ z: depth, kind: isHeader ? 'header' : 'bin', pts, column, row, leftRank: isHeader ? undefined : count - j, bright });
         }
       }
     }
-    // plain top cap
     const O: V3 = { x: 0, y: HTOT / 2, z: 0 };
     for (let column = 0; column < 6; column++) {
       if (tx({ x: 0, y: 1, z: 0 }, theta.current).z <= 0) break;
       const A = hexVert(column, true), B = hexVert((column + 1) % 6, true);
       const pts = [O, A, B].map(p => proj(tx(p, theta.current)));
       const depth = tx({ x: (A.x + B.x) / 3, y: HTOT / 2, z: (A.z + B.z) / 3 }, theta.current).z;
-      polys.push({ z: depth, kind: 'cap', pts });
+      polys.push({ z: depth, kind: 'cap', pts, bright: 1 });
     }
 
-    polys.sort((a, b) => a.z - b.z);            // far -> near
+    polys.sort((a, b) => a.z - b.z);
     binPolys.current = [];
+    const palette = ap.colorblind ? COLORS_CB : COLORS;
     for (const o of polys) {
       ctx.beginPath();
       o.pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
       ctx.closePath();
       if (o.kind === 'cap') {
-        ctx.fillStyle = '#ffffff'; ctx.fill();
+        ctx.fillStyle = shade('#ffffff', o.bright, ap.solid); ctx.fill();
         ctx.lineWidth = 1.2; ctx.strokeStyle = '#111'; ctx.stroke();
       } else if (o.kind === 'header') {
-        if (tower.scheme.columnType === 'color') { ctx.fillStyle = COLORS[o.column!]; }
-        else { ctx.fillStyle = '#ffffff'; }
+        ctx.fillStyle = tw.scheme.columnType === 'color' ? shade(palette[o.column!], o.bright, ap.solid) : shade(ap.headerColor, o.bright, ap.solid);
         ctx.fill();
         ctx.lineWidth = 1.6; ctx.strokeStyle = '#111'; ctx.stroke();
-        if (tower.scheme.columnType !== 'color') {
-          const v = tower.scheme.columnType === 'letter' ? LETTERS[o.column!]
-            : tower.scheme.columnType === 'icon' ? ICONS[o.column!] : String(o.column! + 1);
+        if (tw.scheme.columnType !== 'color') {
+          const v = tw.scheme.columnType === 'letter' ? LETTERS[o.column!]
+            : tw.scheme.columnType === 'icon' ? ICONS[o.column!] : String(o.column! + 1);
+          const ys = o.pts.map(p => p.y), h = Math.max(...ys) - Math.min(...ys);
+          const fs = Math.max(20, Math.min(64, h * 0.62));
           const m = o.pts.reduce((s, p) => ({ x: s.x + p.x / 4, y: s.y + p.y / 4 }), { x: 0, y: 0 });
-          ctx.fillStyle = '#111'; ctx.font = '600 18px ui-sans-serif, system-ui, sans-serif';
+          ctx.fillStyle = '#111'; ctx.font = `700 ${fs}px ui-sans-serif, system-ui, sans-serif`;
           ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(v, m.x, m.y);
         }
       } else {
-        ctx.fillStyle = '#ffffff'; ctx.fill();
+        ctx.fillStyle = binFill({ column: o.column!, rowFromTop: o.row!, leftRank: o.leftRank! }, o.bright); ctx.fill();
         ctx.lineWidth = 1.2; ctx.strokeStyle = '#111'; ctx.stroke();
         binPolys.current.push({ bin: { column: o.column!, rowFromTop: o.row!, leftRank: o.leftRank! }, poly: o.pts });
       }
     }
   }
 
-  useEffect(() => { draw(); /* redraw when tower changes */ // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tower]);
+  function loop() {
+    const now = performance.now();
+    for (const [k, t0] of greens.current) if (now - t0 >= FADE_MS) greens.current.delete(k);
+    draw();
+    if (greens.current.size > 0) raf.current = requestAnimationFrame(loop);
+    else raf.current = null;
+  }
+  function startLoop() { if (raf.current == null) raf.current = requestAnimationFrame(loop); }
+
+  useImperativeHandle(ref, () => ({
+    onCorrect: (b) => { reds.current.clear(); greens.current.set(key(b), performance.now()); startLoop(); },
+    onWrong: (b) => { reds.current.add(key(b)); draw(); },
+    reset: () => { greens.current.clear(); reds.current.clear(); draw(); },
+  }));
+
+  useEffect(() => { draw(); /* redraw on tower/appearance change */ // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tower, appearance]);
+  useEffect(() => () => { if (raf.current != null) cancelAnimationFrame(raf.current); }, []);
 
   function toLogical(e: React.PointerEvent): P2 {
-    const cv = canvasRef.current!; const rect = cv.getBoundingClientRect();
+    const rect = canvasRef.current!.getBoundingClientRect();
     return { x: (e.clientX - rect.left) * (LOGW / rect.width), y: (e.clientY - rect.top) * (LOGH / rect.height) };
   }
 
@@ -134,10 +186,12 @@ export default function TowerCanvas({ tower, onPick, pickable = true }:
         drag.current.active = false;
         if (wasDrag || !pickable || !onPick) return;
         const pt = toLogical(e);
-        for (let i = binPolys.current.length - 1; i >= 0; i--) {   // near -> far
+        for (let i = binPolys.current.length - 1; i >= 0; i--) {
           if (inPoly(pt, binPolys.current[i].poly)) { onPick(binPolys.current[i].bin); return; }
         }
       }}
     />
   );
-}
+});
+
+export default TowerCanvas;

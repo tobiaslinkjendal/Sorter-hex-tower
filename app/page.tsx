@@ -3,13 +3,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Configurator from '@/components/Configurator';
 import AddressPrompt from '@/components/AddressPrompt';
-import TowerCanvas from '@/components/TowerCanvas';
+import TowerCanvas, { TowerHandle } from '@/components/TowerCanvas';
 import { store } from '@/lib/store';
 import { Scheme, schemeKey } from '@/lib/scheme';
+import { Appearance, defaultAppearance, loadAppearance, saveAppearance } from '@/lib/appearance';
 import { buildTower, addressOf, Bin } from '@/lib/tower-model';
 import { createRound, clickBin, isOver, summarize, isValidRound, Round } from '@/lib/round-engine';
 
 const DURATION = 60000;
+const JUMP_APEX = 170, JUMP_END = 360, SHAKE_END = 300;
 
 function mulberry32(seed: number) {
   return () => {
@@ -23,6 +25,7 @@ function mulberry32(seed: number) {
 export default function HomePage() {
   const router = useRouter();
   const [scheme, setScheme] = useState<Scheme>(() => store.scheme);
+  const [appearance, setAppearance] = useState<Appearance>(defaultAppearance);
   const [name, setName] = useState('');
   const [collapsed, setCollapsed] = useState(false);
   const [phase, setPhase] = useState<'config' | 'play'>('config');
@@ -30,27 +33,35 @@ export default function HomePage() {
   const tower = useMemo(() => buildTower(scheme, mulberry32(seed)), [scheme, seed]);
 
   const roundRef = useRef<Round | null>(null);
-  const [, force] = useState(0);
-  const [remaining, setRemaining] = useState(60);
-  const [flash, setFlash] = useState<'ok' | 'no' | null>(null);
+  const towerApi = useRef<TowerHandle>(null);
   const done = useRef(false);
+  const [remaining, setRemaining] = useState(60);
+  const [frac, setFrac] = useState(1);
+  const [cardTarget, setCardTarget] = useState<Bin | null>(null);
+  const [green, setGreen] = useState(0);
+  const [red, setRed] = useState(0);
+  const [anim, setAnim] = useState<{ type: 'jump' | 'shake' | null; key: number }>({ type: null, key: 0 });
 
-  // Remember the player's name across runs.
-  useEffect(() => { const n = localStorage.getItem('hex_name'); if (n) setName(n); }, []);
+  useEffect(() => { const n = localStorage.getItem('hex_name'); if (n) setName(n); setAppearance(loadAppearance()); }, []);
+  const changeAppearance = (a: Appearance) => { setAppearance(a); saveAppearance(a); };
 
   function start() {
-    store.name = name.trim() || null;
-    store.scheme = scheme;
+    store.name = name.trim() || null; store.scheme = scheme;
     if (name.trim()) localStorage.setItem('hex_name', name.trim());
-    roundRef.current = createRound(tower, DURATION, Math.random, performance.now());
-    done.current = false; setRemaining(60); setCollapsed(true); setPhase('play');
+    towerApi.current?.reset();
+    const r = createRound(tower, DURATION, Math.random, performance.now());
+    roundRef.current = r; done.current = false;
+    setCardTarget(r.target); setGreen(0); setRed(0); setRemaining(60); setFrac(1);
+    setCollapsed(true); setPhase('play');
   }
 
   useEffect(() => {
     if (phase !== 'play') return;
     const id = setInterval(() => {
       const now = performance.now(); const r = roundRef.current!;
-      setRemaining(Math.max(0, Math.ceil((DURATION - (now - r.startMs)) / 1000)));
+      const left = DURATION - (now - r.startMs);
+      setRemaining(Math.max(0, Math.ceil(left / 1000)));
+      setFrac(Math.max(0, left / DURATION));
       if (isOver(r, now) && !done.current) finish();
     }, 100);
     return () => clearInterval(id);
@@ -81,14 +92,22 @@ export default function HomePage() {
     if (phase !== 'play' || done.current) return;
     const res = clickBin(roundRef.current!, bin, performance.now());
     roundRef.current = res.state;
-    setFlash(res.correct ? 'ok' : 'no');
-    setTimeout(() => setFlash(null), 160);
-    force(n => n + 1);
+    if (res.correct) {
+      towerApi.current?.onCorrect(bin);
+      setAnim(a => ({ type: 'jump', key: a.key + 1 }));
+      const next = res.state.target;
+      setTimeout(() => { setCardTarget(next); setGreen(g => g + 1); }, JUMP_APEX);
+      setTimeout(() => setAnim(a => ({ type: null, key: a.key })), JUMP_END);
+    } else {
+      towerApi.current?.onWrong(bin);
+      setRed(r => r + 1);
+      setAnim(a => ({ type: 'shake', key: a.key + 1 }));
+      setTimeout(() => setAnim(a => ({ type: null, key: a.key })), SHAKE_END);
+    }
   }
 
   const playing = phase === 'play';
-  const target = playing ? roundRef.current!.target : null;
-  const promptSegs = target ? addressOf(tower, target).segments : null;
+  const promptSegs = playing && cardTarget ? addressOf(tower, cardTarget).segments : null;
 
   return (
     <div className="app">
@@ -114,8 +133,7 @@ export default function HomePage() {
                     onChange={e => { setName(e.target.value); localStorage.setItem('hex_name', e.target.value); }} />
                 </div>
               </div>
-              <Configurator scheme={scheme} onChange={setScheme} />
-              <button className="primary" style={{ width: '100%', marginTop: 12 }} onClick={start}>Start ▶ 60s</button>
+              <Configurator scheme={scheme} onChange={setScheme} appearance={appearance} onAppearance={changeAppearance} />
             </>
           ) : (
             <p className="hint">Round in progress…</p>
@@ -124,29 +142,36 @@ export default function HomePage() {
       </aside>
 
       <main className="stage">
-        <div className="topbar">
+        {playing ? (
+          <div className="countbar">
+            <div className="countbar-fill" style={{ width: `${frac * 100}%` }} />
+            <span className="countbar-num">{remaining}s</span>
+          </div>
+        ) : (
+          <div className="topbar">
+            <span className="panel-title">Find the bin, fast.</span>
+            <span className="hint">Configure left · drag to spin</span>
+          </div>
+        )}
+
+        <div className="stage-main">
           {playing ? (
             <>
-              <span className="mono">⏱ {remaining}s</span>
-              <span className="mono">Found {roundRef.current!.finds.length}</span>
+              <div className="score"><span className="g">{green}</span><span className="r">{red}</span></div>
+              {promptSegs && (
+                <div key={anim.key} className={`card ${anim.type ?? ''}`}>
+                  <AddressPrompt segments={promptSegs} colorblind={appearance.colorblind} />
+                </div>
+              )}
             </>
           ) : (
-            <>
-              <span className="panel-title">Find the bin, fast.</span>
-              <span className="hint">Configure left · drag to spin</span>
-            </>
+            <button className="primary start-btn" onClick={start}>Start ▶ 60s</button>
           )}
-        </div>
-        <div className="stage-main">
-          {playing && promptSegs && (
-            <div className={flash === 'ok' ? 'flash-ok' : flash === 'no' ? 'flash-no' : ''}>
-              <AddressPrompt segments={promptSegs} />
-            </div>
-          )}
+
           <div className="canvas-wrap">
-            <TowerCanvas tower={tower} onPick={onPick} pickable={playing} />
+            <TowerCanvas ref={towerApi} tower={tower} appearance={appearance} onPick={onPick} pickable={playing} />
           </div>
-          <p className="hint">{playing ? 'Click the bin · drag to rotate' : 'Live preview — press Start to play'}</p>
+          <p className="hint">{playing ? 'Click the bin · drag to rotate' : 'Live preview — set it up, then Start'}</p>
         </div>
       </main>
     </div>
