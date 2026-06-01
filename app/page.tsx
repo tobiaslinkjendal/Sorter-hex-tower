@@ -116,13 +116,12 @@ export default function HomePage() {
     if (name.trim()) localStorage.setItem('hex_name', name.trim());
     setGreen(0); setRed(0); setCardTarget(null);
     setCollapsed(true); setResCollapsed(true); setPhase('countdown'); setCdFrac(0); setCdText('3');
-    // Stepped fill: each step ramps in ~100ms (CSS transition) then holds ~900ms.
+    // "3" shows with no bar for 900ms, then each number fills a step (~100ms ramp).
     cdTimeouts.current = [
-      window.setTimeout(() => setCdFrac(0.33), 20),
-      window.setTimeout(() => { setCdFrac(0.66); setCdText('2'); }, 1000),
-      window.setTimeout(() => { setCdFrac(1); setCdText('1'); }, 2000),
-      window.setTimeout(() => setCdText('GO!'), 3000),
-      window.setTimeout(() => reallyBegin(timed), 3400),
+      window.setTimeout(() => { setCdFrac(0.33); setCdText('2'); }, 900),
+      window.setTimeout(() => { setCdFrac(0.66); setCdText('1'); }, 1900),
+      window.setTimeout(() => { setCdFrac(1); setCdText('GO!'); }, 2900),
+      window.setTimeout(() => reallyBegin(timed), 3200),
     ];
   }
   function reallyBegin(timed: boolean) {
@@ -284,16 +283,17 @@ export default function HomePage() {
 
         <div className="stage-main">
           <div className="stage-top">
-            {phase !== 'home' && <div className="score"><span className="g">{green}</span><span className="r">{red}</span></div>}
+            {phase === 'home'
+              ? (showButtons && (
+                <div style={{ display: 'flex', gap: 12 }}>
+                  <button className="primary start-btn" onClick={() => begin(true)}>{startLabel}</button>
+                  <button className="start-btn" onClick={() => begin(false)}>Practice</button>
+                </div>
+              ))
+              : <div className="score"><span className="g">{green}</span><span className="r">{red}</span></div>}
             <div key={anim.key} className={`card ${anim.type ?? ''}`}>
               <AddressPrompt segments={cardSegs} colorblind={appearance.colorblind} />
             </div>
-            {phase === 'home' && showButtons && (
-              <div style={{ display: 'flex', gap: 12 }}>
-                <button className="primary start-btn" onClick={() => begin(true)}>{startLabel}</button>
-                <button className="start-btn" onClick={() => begin(false)}>Practice</button>
-              </div>
-            )}
           </div>
           <div className="canvas-wrap">
             <TowerCanvas ref={towerApi} tower={tower} appearance={appearance} onPick={onPick}

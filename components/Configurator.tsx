@@ -1,8 +1,8 @@
 'use client';
 import { useState } from 'react';
 import {
-  ArrowsDownUp, Columns, Stack, GridFour, ArrowsVertical, ArrowsHorizontal,
-  ArrowsClockwise, Timer, SpeakerHigh, FrameCorners, Palette, Mouse,
+  Cards, Columns, Rows, SquaresFour, ArrowsVertical, ArrowsHorizontal,
+  ArrowsClockwise, Timer, SpeakerHigh, ArrowsOutSimple, Palette, MouseScroll,
 } from '@phosphor-icons/react';
 import { Scheme, Dim, BinsPerSection } from '@/lib/scheme';
 import { Appearance, Size, Placement } from '@/lib/appearance';
@@ -55,7 +55,7 @@ export default function Configurator({ scheme, onChange, appearance, onAppearanc
 
   return (
     <div>
-      <Row icon={<ArrowsDownUp {...ic} />} label="Address order">
+      <Row icon={<Cards {...ic} />} label="Address order">
         <select value={scheme.order.join(',')} onChange={e => set({ order: e.target.value.split(',') as [Dim, Dim, Dim] })}>
           {ORDERS.map(o => <option key={o.join(',')} value={o.join(',')}>{o.join(' → ')}</option>)}
         </select>
@@ -67,7 +67,7 @@ export default function Configurator({ scheme, onChange, appearance, onAppearanc
         </select>
       </Row>
 
-      <DualRow icon={<Stack {...ic} />}>
+      <DualRow icon={<Rows {...ic} />}>
         <Field label="Layer type">
           <select value={scheme.layerType} onChange={e => set({ layerType: e.target.value as Scheme['layerType'] })}>
             {['letter', 'number'].map(t => <option key={t} value={t}>{tl(t)}</option>)}
@@ -80,7 +80,7 @@ export default function Configurator({ scheme, onChange, appearance, onAppearanc
         </Field>
       </DualRow>
 
-      <DualRow icon={<GridFour {...ic} />}>
+      <DualRow icon={<SquaresFour {...ic} />}>
         <Field label="Bin type">
           <select value={scheme.binType} onChange={e => set({ binType: e.target.value as Scheme['binType'] })}>
             {['letter', 'number', 'handed'].map(t => <option key={t} value={t}>{tl(t)}</option>)}
@@ -117,7 +117,7 @@ export default function Configurator({ scheme, onChange, appearance, onAppearanc
               onChange={e => setAp({ sensitivity: +e.target.value })} />
           </Row>
 
-          <DualRow icon={<Mouse {...ic} />}>
+          <DualRow icon={<MouseScroll {...ic} />}>
             <Field label="Scroll to rotate">
               <select value={appearance.scrollRotate ? 'yes' : 'no'} onChange={e => setAp({ scrollRotate: e.target.value === 'yes' })}>
                 {['no', 'yes'].map(t => <option key={t}>{t}</option>)}
@@ -143,7 +143,7 @@ export default function Configurator({ scheme, onChange, appearance, onAppearanc
             </Field>
           </DualRow>
 
-          <DualRow icon={<FrameCorners {...ic} />}>
+          <DualRow icon={<ArrowsOutSimple {...ic} />}>
             <Field label="Tower size">
               <select value={appearance.size} onChange={e => setAp({ size: e.target.value as Size })}>
                 <option value="s">small</option><option value="m">medium</option><option value="l">large</option>

@@ -19,7 +19,7 @@ export interface Appearance {
 
 export function defaultAppearance(): Appearance {
   return {
-    solid: false, colorblind: false, headerColor: '#dddddd', binColor: '#ffffff',
+    solid: false, colorblind: false, headerColor: '#dddddd', binColor: '#b1916e',
     sensitivity: 1, size: 'm', placement: 'mid', sound: false, durationS: 60,
     scrollRotate: false, scrollDir: 'up', autospin: true,
   };

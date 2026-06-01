@@ -32,5 +32,5 @@ export default function AddressPrompt({ segments, colorblind = false }:
       </div>
     );
   }
-  return <div className="addr"><Parts segs={segments} /></div>;
+  return <div className="addr-box" style={{ background: '#fff' }}><Parts segs={segments} /></div>;
 }
