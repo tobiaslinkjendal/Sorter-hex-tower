@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import { Star, User, ArrowClockwise } from '@phosphor-icons/react';
 import Configurator from '@/components/Configurator';
 import AddressPrompt from '@/components/AddressPrompt';
@@ -321,6 +322,7 @@ export default function HomePage() {
               {summary.score > board.averageScore ? ' — you beat it.' : ''}</p>
           )}
           {board_}
+          <Link href="/analytics" className="btnlink" style={{ marginTop: 14 }}>Advanced results →</Link>
         </div>
       </aside>
     </div>
