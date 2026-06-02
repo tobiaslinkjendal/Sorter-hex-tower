@@ -28,7 +28,8 @@ describe('addressOf', () => {
                 columnType: 'letter' as const, layerType: 'number' as const, binType: 'number' as const };
     const t = buildTower(s, seededRng(2));
     const addr = addressOf(t, { column: 0, rowFromTop: 1, leftRank: 1 });
-    expect(addr.segments.map(x => x.value ?? x.kind)).toEqual(['1','1','A']);
+    // column ids run A→F, so physical column 0 displays as 'F'
+    expect(addr.segments.map(x => x.value ?? x.kind)).toEqual(['1','1','F']);
   });
 });
 

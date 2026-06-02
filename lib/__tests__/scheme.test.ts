@@ -16,10 +16,10 @@ describe('handedLabel', () => {
 
 describe('segments respect type + direction', () => {
   const s = defaultScheme();
-  it('column color segment returns a hex color', () => {
+  it('column color segment returns a hex color (ids run A→F, so the index is reversed)', () => {
     const seg = columnSegment({ ...s, columnType: 'color' }, 0);
     expect(seg.kind).toBe('color');
-    expect(seg.value).toBe(COLORS[0]);
+    expect(seg.value).toBe(COLORS[5]);
   });
   it('layer number honors layerFrom=bottom', () => {
     const top = layerSegment({ ...s, layerType: 'number', layerFrom: 'top' }, 1, 5);

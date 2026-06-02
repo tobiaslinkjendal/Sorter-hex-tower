@@ -56,8 +56,13 @@ export default function AnalyticsPage() {
   const [finds, setFinds] = useState<FindRow[]>([]);
   const [clicks, setClicks] = useState<ClickRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [sel, setSel] = useState<Record<string, string>>({});
+  const [sel, setSel] = useState<Record<string, string>>({ valid: 'valid' });
   const [metric, setMetric] = useState<Metric>('findtime');
+  const [hotLayers, setHotLayers] = useState(4);
+  const [hotBins, setHotBins] = useState(3);
+  const [cmpA, setCmpA] = useState('');
+  const [cmpB, setCmpB] = useState('');
+  const [cmpN, setCmpN] = useState(10);
 
   const router = useRouter();
   useEffect(() => {
@@ -88,7 +93,6 @@ export default function AnalyticsPage() {
 
   const players = new Set(fRounds.map(r => r.name ?? 'anon')).size;
   const avgFind = avg(fRounds.filter(r => r.finds_count > 0).map(r => r.duration_s * 1000 / r.finds_count));
-  const validPct = fRounds.length ? (fRounds.filter(r => r.valid).length / fRounds.length) * 100 : 0;
 
   // best / worst schemes by avg find time (>=2 rounds)
   const schemeAgg = useMemo(() => {
@@ -120,14 +124,46 @@ export default function AnalyticsPage() {
 
   const heatTime = useMemo(() => buildHeat(fFinds, f => f.target_layer, f => f.target_bin, f => f.time_ms), [fFinds]);
   const heatErr = useMemo(() => buildHeat(fFinds, f => f.target_layer, f => f.target_bin, f => (f.wrong_clicks > 0 ? 1 : 0)), [fFinds]);
-  const hotCount = useMemo(() => { // count of wrong clicks per clicked cell
-    const items = fClicks.filter(c => !c.is_correct);
-    const rs = [...new Set(items.map(c => c.clicked_layer))].sort((a, b) => a - b);
-    const cs = [...new Set(items.map(c => c.clicked_bin))].sort((a, b) => a - b);
+
+  // Wrong-click hotspots for ONE chosen layout (fixed bins/section), counts per clicked cell.
+  const findToRoundAll = findToRound;
+  const hotByLayout = useMemo(() => {
+    const ids = new Set(rounds.filter(r => r.scheme.layers === hotLayers && String(r.scheme.binsPerSection) === String(hotBins)).map(r => r.id));
+    const items = clicks.filter(c => !c.is_correct && ids.has(findToRoundAll.get(c.find_id) ?? ''));
     const cnt = new Map<string, number>();
-    for (const c of items) { const k = c.clicked_layer + ',' + c.clicked_bin; cnt.set(k, (cnt.get(k) ?? 0) + 1); }
+    for (const c of items) cnt.set(c.clicked_layer + ',' + c.clicked_bin, (cnt.get(c.clicked_layer + ',' + c.clicked_bin) ?? 0) + 1);
+    const rs = Array.from({ length: hotLayers }, (_, i) => i + 1);
+    const cs = Array.from({ length: hotBins }, (_, i) => i + 1);
     return { rows: rs.map(String), cols: cs.map(String), values: rs.map(r => cs.map(c => cnt.get(r + ',' + c) ?? null)) };
-  }, [fClicks]);
+  }, [clicks, rounds, hotLayers, hotBins, findToRoundAll]);
+
+  // "How far off" — relate each wrong click to its find's target.
+  const findById = useMemo(() => { const m = new Map<string, FindRow>(); for (const f of finds) m.set(f.id, f); return m; }, [finds]);
+  const hexDist = (a: number, b: number) => { const d = Math.abs(a - b); return Math.min(d, 6 - d); };
+  const miss = useMemo(() => {
+    const wrong = fClicks.filter(c => !c.is_correct);
+    const type = { 'wrong column': 0, 'wrong layer': 0, 'sibling bin': 0 };
+    const layerOff = new Map<number, number>(), binOff = new Map<number, number>(), colDist = new Map<number, number>();
+    const bump = (m: Map<number, number>, k: number) => m.set(k, (m.get(k) ?? 0) + 1);
+    for (const c of wrong) {
+      const f = findById.get(c.find_id); if (!f) continue;
+      if (c.clicked_column !== f.target_column) { type['wrong column']++; bump(colDist, hexDist(c.clicked_column, f.target_column)); }
+      else if (c.clicked_layer !== f.target_layer) { type['wrong layer']++; bump(layerOff, c.clicked_layer - f.target_layer); }
+      else { type['sibling bin']++; bump(binOff, c.clicked_bin - f.target_bin); }
+    }
+    const toData = (m: Map<number, number>) => [...m.entries()].sort((a, b) => a[0] - b[0]).map(([k, v]) => ({ label: (k > 0 ? '+' : '') + k, value: v }));
+    return {
+      type: Object.entries(type).map(([label, value]) => ({ label, value })),
+      layerOff: toData(layerOff), binOff: toData(binOff),
+      colDist: [...colDist.entries()].sort((a, b) => a[0] - b[0]).map(([k, v]) => ({ label: String(k), value: v })),
+    };
+  }, [fClicks, findById]);
+
+  const userNames = useMemo(() => [...new Set(rounds.map(r => r.name).filter((n): n is string => !!n))].sort(), [rounds]);
+  const cmpStats = (name: string) => {
+    const rs = rounds.filter(r => r.name === name).slice(-cmpN);
+    return { games: rs.length, score: avg(rs.map(r => r.score)), acc: avg(rs.map(r => r.accuracy)) * 100, find: avg(rs.map(r => r.finds_count > 0 ? r.duration_s * 1000 / r.finds_count : 0)), best: rs.length ? Math.max(...rs.map(r => r.score)) : 0 };
+  };
 
   if (loading) return <main className="an"><p className="hint">Loading analytics…</p></main>;
 
@@ -159,11 +195,9 @@ export default function AnalyticsPage() {
       <div className="stat-cards">
         <StatCard label="rounds" value={String(fRounds.length)} />
         <StatCard label="players" value={String(players)} />
-        <StatCard label="finds" value={String(fFinds.length || fRounds.reduce((a, r) => a + r.finds_count, 0))} />
         <StatCard label="avg score" value={avg(fRounds.map(r => r.score)).toFixed(1)} />
         <StatCard label="avg accuracy" value={pct(avg(fRounds.map(r => r.accuracy)) * 100)} />
         <StatCard label="avg find time" value={msToS(avgFind)} />
-        <StatCard label="valid" value={pct(validPct)} />
       </div>
 
       <h2 style={{ margin: '8px 0 10px', fontSize: 15 }}>By scheme facet — {metricName}</h2>
@@ -195,10 +229,27 @@ export default function AnalyticsPage() {
             <BarChart title="Error rate by layer" fmt={v => Math.round(v * 100) + '%'} data={groupAvg(fFinds, f => String(f.target_layer), f => (f.wrong_clicks > 0 ? 1 : 0))} />
           </div>
 
-          <h2 style={{ margin: '18px 0 10px', fontSize: 15 }}>Within-round learning &amp; mistakes</h2>
+          <h2 style={{ margin: '18px 0 10px', fontSize: 15 }}>How far off were the misses?</h2>
+          <div className="an-grid">
+            <BarChart title="Miss type" fmt={v => String(v)} data={miss.type} />
+            <BarChart title="Column distance when wrong column (hex steps)" fmt={v => String(v)} data={miss.colDist} />
+            <BarChart title="Layer offset when wrong layer (clicked − target)" fmt={v => String(v)} data={miss.layerOff} />
+            <BarChart title="Bin offset when sibling bin (clicked − target)" fmt={v => String(v)} data={miss.binOff} />
+          </div>
+
+          <h2 style={{ margin: '18px 0 10px', fontSize: 15 }}>Wrong-click hotspots for a chosen layout</h2>
+          <div className="an-filters" style={{ marginBottom: 12 }}>
+            <label style={{ fontSize: 12 }}><span className="label-up" style={{ display: 'block' }}>Layers</span>
+              <select value={hotLayers} onChange={e => setHotLayers(+e.target.value)}>{[3, 4, 5, 6, 7, 8].map(n => <option key={n} value={n}>{n}</option>)}</select>
+            </label>
+            <label style={{ fontSize: 12 }}><span className="label-up" style={{ display: 'block' }}>Bins / section</span>
+              <select value={hotBins} onChange={e => setHotBins(+e.target.value)}>{[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}</option>)}</select>
+            </label>
+            <span className="hint" style={{ alignSelf: 'flex-end' }}>Only counts wrong clicks from fixed {hotBins}-bin / {hotLayers}-layer towers.</span>
+          </div>
           <div className="an-grid">
             <BarChart title="Avg find time by find # (learning curve)" fmt={msToS} data={groupAvg(fFinds, f => String(f.seq + 1), f => f.time_ms)} />
-            <Heatmap title="Wrong-click hotspots — clicked layer × bin" rows={hotCount.rows} cols={hotCount.cols} values={hotCount.values} fmt={v => String(Math.round(v))} />
+            <Heatmap title={`Wrong clicks — layer × bin (L${hotLayers}/${hotBins})`} rows={hotByLayout.rows} cols={hotByLayout.cols} values={hotByLayout.values} fmt={v => String(Math.round(v))} />
           </div>
         </>
       )}
@@ -214,6 +265,31 @@ export default function AnalyticsPage() {
         ))}
         {usersAgg.length === 0 && <p className="hint">No players yet.</p>}
       </div>
+
+      <h2 style={{ margin: '18px 0 10px', fontSize: 15 }}>Compare two players</h2>
+      <div className="an-filters" style={{ marginBottom: 12 }}>
+        <label style={{ fontSize: 12 }}><span className="label-up" style={{ display: 'block' }}>Player A</span>
+          <select value={cmpA} onChange={e => setCmpA(e.target.value)}><option value="">—</option>{userNames.map(n => <option key={n}>{n}</option>)}</select></label>
+        <label style={{ fontSize: 12 }}><span className="label-up" style={{ display: 'block' }}>Player B</span>
+          <select value={cmpB} onChange={e => setCmpB(e.target.value)}><option value="">—</option>{userNames.map(n => <option key={n}>{n}</option>)}</select></label>
+        <label style={{ fontSize: 12 }}><span className="label-up" style={{ display: 'block' }}>Last</span>
+          <select value={cmpN} onChange={e => setCmpN(+e.target.value)}>{[5, 10, 30, 50].map(n => <option key={n} value={n}>{n} games</option>)}</select></label>
+      </div>
+      {cmpA && cmpB ? (() => {
+        const a = cmpStats(cmpA), b = cmpStats(cmpB);
+        const row = (label: string, av: string, bv: string) => (
+          <div className="lb-row" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}><span>{label}</span><span className="mono">{av}</span><span className="mono">{bv}</span></div>);
+        return (
+          <div className="card-box" style={{ marginBottom: 8 }}>
+            <div className="lb-head" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}><span>metric</span><span>{cmpA}</span><span>{cmpB}</span></div>
+            {row('games', String(a.games), String(b.games))}
+            {row('avg score', a.score.toFixed(1), b.score.toFixed(1))}
+            {row('best score', String(a.best), String(b.best))}
+            {row('avg accuracy', pct(a.acc), pct(b.acc))}
+            {row('avg find time', msToS(a.find), msToS(b.find))}
+          </div>
+        );
+      })() : <p className="hint" style={{ marginBottom: 8 }}>Pick two players to compare.</p>}
 
       <h2 style={{ margin: '18px 0 10px', fontSize: 15 }}>Schemes ranked by avg find time (≥2 rounds)</h2>
       <div className="card-box">

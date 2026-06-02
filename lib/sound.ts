@@ -2,7 +2,7 @@
 // All gated by the `enabled` flag; the context is created lazily on first use
 // (after a user gesture, e.g. Start), per browser autoplay rules.
 
-type Kind = 'correct' | 'wrong' | 'start' | 'finish';
+type Kind = 'correct' | 'wrong' | 'start' | 'finish' | 'tick';
 let ctx: AudioContext | null = null;
 
 function ac(): AudioContext | null {
@@ -37,5 +37,6 @@ export function playSound(kind: Kind, enabled: boolean) {
     case 'wrong': tone(160, 0, 0.18, 'square', 0.18); break;
     case 'start': tone(440, 0, 0.1, 'triangle', 0.2); tone(660, 0.09, 0.12, 'triangle', 0.2); break;
     case 'finish': tone(784, 0, 0.14, 'triangle', 0.22); tone(587, 0.13, 0.14, 'triangle', 0.22); tone(440, 0.26, 0.22, 'triangle', 0.22); break;
+    case 'tick': tone(880, 0, 0.05, 'square', 0.16); break;
   }
 }

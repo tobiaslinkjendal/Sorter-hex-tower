@@ -1,12 +1,13 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Star, User, ArrowClockwise } from '@phosphor-icons/react';
+import { Star, User, PlayCircle } from '@phosphor-icons/react';
 import Configurator from '@/components/Configurator';
 import AddressPrompt from '@/components/AddressPrompt';
 import TowerCanvas, { TowerHandle } from '@/components/TowerCanvas';
 import { store } from '@/lib/store';
 import { Scheme, Segment, schemeKey, randomizeScheme, orderCode, cardSignature } from '@/lib/scheme';
+import { computeScore } from '@/lib/score';
 import { Appearance, defaultAppearance, loadAppearance, saveAppearance } from '@/lib/appearance';
 import { buildTower, addressOf, Bin } from '@/lib/tower-model';
 import { createRound, clickBin, isOver, summarize, isValidRound, Round, Summary } from '@/lib/round-engine';
@@ -29,6 +30,20 @@ interface Board { overall: LRow[]; averageScore: number; totalRounds: number }
 interface PopRow { schemeKey: string; scheme: Scheme; count: number }
 type Sum = Summary & { score: number };
 const ic = { size: 18, weight: 'light' as const };
+
+// Countdown bar curve: per number, overshoot in ~100ms then settle for ~900ms.
+function cdAt(t: number): { w: number; n: string } {
+  const segs: [number, number, number, number][] = [
+    [0, 100, 0, 25], [100, 1000, 25, 10],
+    [1000, 1100, 10, 50], [1100, 2000, 50, 35],
+    [2000, 2100, 35, 75], [2100, 3000, 75, 60],
+    [3000, 3100, 60, 100],
+  ];
+  let w = 100;
+  for (const [a, b, f, to] of segs) { if (t <= a) { w = f; break; } if (t < b) { w = f + (to - f) * ((t - a) / (b - a)); break; } w = to; }
+  const n = t < 1000 ? '3' : t < 2000 ? '2' : t < 3000 ? '1' : '';
+  return { w, n };
+}
 
 // Filled-in placeholder address for the home preview and the countdown.
 function placeholderSegments(s: Scheme): Segment[] {
@@ -55,7 +70,9 @@ export default function HomePage() {
   const roundRef = useRef<Round | null>(null);
   const towerApi = useRef<TowerHandle>(null);
   const done = useRef(false);
-  const cdTimeouts = useRef<number[]>([]);
+  const cdRaf = useRef<number | null>(null);
+  const lastTick = useRef(0);
+  const [practiceTick, setPracticeTick] = useState(0);
   const [remaining, setRemaining] = useState(60);
   const [frac, setFrac] = useState(1);
   const [cdFrac, setCdFrac] = useState(0);
@@ -123,13 +140,16 @@ export default function HomePage() {
     if (name.trim()) localStorage.setItem('hex_name', name.trim());
     setGreen(0); setRed(0); setCardTarget(null);
     setCollapsed(true); setResCollapsed(true); setPhase('countdown'); setCdFrac(0); setCdText('3');
-    // "3" shows with no bar for 900ms, then each number fills a step (~100ms ramp).
-    cdTimeouts.current = [
-      window.setTimeout(() => { setCdFrac(0.33); setCdText('2'); }, 900),
-      window.setTimeout(() => { setCdFrac(0.66); setCdText('1'); }, 1900),
-      window.setTimeout(() => { setCdFrac(1); setCdText('GO!'); }, 2900),
-      window.setTimeout(() => reallyBegin(timed), 3200),
-    ];
+    // Each number: fast overshoot (~100ms) then settle back over ~900ms. No "GO".
+    const start = performance.now();
+    const tick = () => {
+      const t = performance.now() - start;
+      const { w, n } = cdAt(t);
+      setCdFrac(w / 100); setCdText(n);
+      if (t >= 3100) { reallyBegin(timed); return; }
+      cdRaf.current = requestAnimationFrame(tick);
+    };
+    cdRaf.current = requestAnimationFrame(tick);
   }
   function reallyBegin(timed: boolean) {
     const s = rseed(); setSeed(s);
@@ -137,14 +157,14 @@ export default function HomePage() {
     const dur = timed ? appearance.durationS * 1000 : Infinity;
     towerApi.current?.reset();
     roundRef.current = createRound(playTower, dur, Math.random, performance.now());
-    done.current = false;
+    done.current = false; lastTick.current = 0;
     setCardTarget(roundRef.current.target);
     setRemaining(appearance.durationS); setFrac(1);
     setPhase(timed ? 'play' : 'practice');
     playSound('start', appearance.sound);
   }
   function cancelAll() {
-    cdTimeouts.current.forEach(t => window.clearTimeout(t)); cdTimeouts.current = [];
+    if (cdRaf.current) cancelAnimationFrame(cdRaf.current); cdRaf.current = null;
     done.current = true; setPhase('home'); setCollapsed(false); setShowButtons(true);
   }
 
@@ -154,12 +174,20 @@ export default function HomePage() {
     const id = setInterval(() => {
       const now = performance.now(); const r = roundRef.current!;
       const left = dur - (now - r.startMs);
-      setRemaining(Math.max(0, Math.ceil(left / 1000)));
-      setFrac(Math.max(0, left / dur));
+      const sec = Math.max(0, Math.ceil(left / 1000));
+      setRemaining(sec); setFrac(Math.max(0, left / dur));
+      if (sec <= 5 && sec > 0 && sec !== lastTick.current) { lastTick.current = sec; playSound('tick', appearance.sound); }
       if (isOver(r, now) && !done.current) finish();
     }, 100);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
+
+  // Practice: tick once a second so the live sec/bin metric refreshes.
+  useEffect(() => {
+    if (phase !== 'practice') return;
+    const id = setInterval(() => setPracticeTick(t => t + 1), 1000);
+    return () => clearInterval(id);
   }, [phase]);
 
   async function finish() {
@@ -168,7 +196,7 @@ export default function HomePage() {
     const r = roundRef.current!;
     const sum = summarize(r);
     const valid = isValidRound(sum);
-    const score = Math.round(sum.findsCount * 60 / appearance.durationS);
+    const score = computeScore(sum.findsCount, appearance.durationS, sum.accuracy, scheme);
     const finds = r.finds.map((f, i) => ({
       seq: i, target: f.target, targetDisplay: f.targetDisplay, timeMs: f.endMs - f.startMs,
       wrongClicks: f.wrongClicks,
@@ -216,6 +244,28 @@ export default function HomePage() {
   const cardSegs = inRound && cardTarget ? addressOf(tower, cardTarget).segments : placeholderSegments(scheme);
   const rows = boardTab === 'overall' ? board?.overall : schemeBoards[boardTab];
 
+  // Practice: live seconds-per-bin over the last 15s (recomputed each practiceTick).
+  void practiceTick;
+  const spb = (() => {
+    const r = roundRef.current;
+    if (phase !== 'practice' || !r) return null;
+    const now = performance.now();
+    const winS = Math.min(15000, now - r.startMs) / 1000;
+    const cnt = r.finds.filter(f => f.endMs >= now - 15000).length;
+    return cnt > 0 ? winS / cnt : null;
+  })();
+  const spbColor = (v: number | null) => {
+    const lerp = (a: number[], b: number[], t: number) => a.map((x, i) => Math.round(x + (b[i] - x) * t));
+    const G = [46, 125, 50], Y = [224, 176, 0], R = [209, 47, 47];
+    let c: number[];
+    if (v == null) c = R;
+    else if (v <= 3) c = G;
+    else if (v <= 5) c = lerp(G, Y, (v - 3) / 2);
+    else if (v <= 10) c = lerp(Y, R, (v - 5) / 5);
+    else c = R;
+    return `rgb(${c.join(',')})`;
+  };
+
   const nameCell = (n: string | null) => n
     ? <Link className="lb-name" href={`/user?name=${encodeURIComponent(n)}`}>{n}</Link>
     : <span className="lb-name">anon</span>;
@@ -238,7 +288,7 @@ export default function HomePage() {
             {nameCell(r.name)}
             <span className="mono">{r.score}</span>
             <span className="mono">{Math.round(r.accuracy * 100)}%</span>
-            <button className="lb-try" title="Try this scheme" onClick={() => applyScheme(r.scheme)}><ArrowClockwise size={14} /></button>
+            <button className="lb-try" title="Play this scheme" onClick={() => applyScheme(r.scheme)}><PlayCircle size={16} /></button>
           </div>
         ))}
         {(!rows || rows.length === 0) && <div className="lb-row"><span /><span className="hint">No valid rounds yet.</span><span /><span /><span /></div>}
@@ -265,7 +315,7 @@ export default function HomePage() {
             {showOC && <span className="mono">{cardSignature(r.scheme)}</span>}
             <span className="mono">{r.score}</span>
             <span className="mono">{Math.round(r.accuracy * 100)}%</span>
-            <button className="lb-try" title="Try this scheme" onClick={() => applyScheme(r.scheme)}><ArrowClockwise size={14} /></button>
+            <button className="lb-try" title="Play this scheme" onClick={() => applyScheme(r.scheme)}><PlayCircle size={16} /></button>
           </div>
         ))}
         {(!layoutBoard || layoutBoard.length === 0) && <div className="lb-row" style={{ gridTemplateColumns: ocCols }}><span /><span className="hint">No rounds for this layout.</span></div>}
@@ -310,9 +360,10 @@ export default function HomePage() {
       </aside>
 
       <main className="stage">
-        <div className="countbar" style={phase === 'practice' ? { background: 'var(--ink)' } : undefined}>
+        <div className={`countbar ${phase === 'play' && remaining <= 5 ? 'low' : ''}`}
+          style={phase === 'practice' ? { background: 'var(--ink)' } : undefined}>
           {(phase === 'play' || phase === 'countdown') && (
-            <div className="countbar-fill" style={{ width: `${(phase === 'countdown' ? cdFrac : frac) * 100}%` }} />
+            <div className="countbar-fill" style={{ width: `${(phase === 'countdown' ? cdFrac : frac) * 100}%`, transition: phase === 'countdown' ? 'none' : undefined }} />
           )}
           {phase !== 'home' && <button className="countbar-cancel" onClick={cancelAll} aria-label="cancel">✕</button>}
           {phase === 'play' && <span className="countbar-num">{remaining}s</span>}
@@ -329,7 +380,8 @@ export default function HomePage() {
                   <button className="start-btn" onClick={() => begin(false)}>Practice</button>
                 </div>
               ))
-              : <div className="score"><span className="g">{green}</span><span className="r">{red}</span></div>}
+              : <div className="score"><span className="g">{green}</span><span className="r">{red}</span>
+                {phase === 'practice' && <span style={{ color: spbColor(spb), fontSize: 22 }}>{spb == null ? '—' : spb.toFixed(1)} s/bin</span>}</div>}
             <div key={anim.key} className={`card ${anim.type ?? ''}`}>
               <AddressPrompt segments={cardSegs} colorblind={appearance.colorblind} />
             </div>
@@ -350,7 +402,7 @@ export default function HomePage() {
           {summary ? (
             <div className="stat-row" style={{ marginBottom: 14 }}>
               <div className="stat"><b>{summary.findsCount}</b><span>found</span></div>
-              <div className="stat"><b>{summary.score}</b><span>score /60s</span></div>
+              <div className="stat"><b>{summary.score}</b><span>score</span></div>
               <div className="stat"><b>{Math.round(summary.accuracy * 100)}%</b><span>accuracy</span></div>
               <div className="stat"><b>{summary.wrongClicksTotal}</b><span>wrong</span></div>
             </div>
@@ -359,8 +411,8 @@ export default function HomePage() {
             <p style={{ margin: '0 0 12px' }}>Average: <b className="mono">{board.averageScore.toFixed(1)}</b>
               {summary.score > board.averageScore ? ' — you beat it.' : ''}</p>
           )}
-          {board_}
           {layoutTbl}
+          {board_}
           <Link href="/analytics" className="btnlink" style={{ marginTop: 14 }}>Advanced results →</Link>
         </div>
       </aside>

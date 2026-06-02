@@ -1,6 +1,8 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { PlayCircle } from '@phosphor-icons/react';
 import { Scheme, orderCode, cardSignature } from '@/lib/scheme';
 import { StatCard, BarChart, Trend, Datum } from '@/components/charts';
 
@@ -11,6 +13,8 @@ const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.le
 const findMs = (r: URound) => (r.finds_count > 0 ? r.duration_s * 1000 / r.finds_count : 0);
 
 export default function UserPage() {
+  const router = useRouter();
+  const useScheme = (s: Scheme) => { try { localStorage.setItem('hex_apply_scheme', JSON.stringify(s)); } catch { /* ignore */ } router.push('/'); };
   const [name, setName] = useState('');
   const [rounds, setRounds] = useState<URound[]>([]);
   const [loading, setLoading] = useState(true);
@@ -28,7 +32,8 @@ export default function UserPage() {
       const slice = n ? rounds.slice(-n) : rounds;
       return { label: n ? `last ${n}` : 'all', games: slice.length, find: avg(slice.map(findMs)), acc: avg(slice.map(r => r.accuracy)) * 100 };
     };
-    return [mk(5), mk(10), mk(30), mk(50), mk(null)];
+    const ns: (number | null)[] = rounds.length >= 30 ? [5, 10, 30, 50, null] : [5, 10];
+    return ns.map(mk);
   }, [rounds]);
 
   const byLayout = useMemo<Datum[]>(() => {
@@ -38,9 +43,9 @@ export default function UserPage() {
   }, [rounds]);
 
   const byScheme = useMemo(() => {
-    const m = new Map<string, { n: number; best: number; desc: string }>();
+    const m = new Map<string, { n: number; best: number; desc: string; scheme: Scheme }>();
     for (const r of rounds) {
-      const e = m.get(r.scheme_key) ?? { n: 0, best: 0, desc: `${orderCode(r.scheme)} · ${cardSignature(r.scheme)} · L${r.scheme.layers}/${r.scheme.binsPerSection}` };
+      const e = m.get(r.scheme_key) ?? { n: 0, best: 0, scheme: r.scheme, desc: `${orderCode(r.scheme)} · ${cardSignature(r.scheme)} · L${r.scheme.layers}/${r.scheme.binsPerSection}` };
       e.n++; e.best = Math.max(e.best, r.score); m.set(r.scheme_key, e);
     }
     return [...m.values()].sort((a, b) => b.n - a.n);
@@ -86,10 +91,11 @@ export default function UserPage() {
 
       <h2 style={{ margin: '18px 0 10px', fontSize: 15 }}>Per scheme</h2>
       <div className="card-box">
-        <div className="lb-head" style={{ gridTemplateColumns: '1fr auto auto' }}><span>scheme</span><span>runs</span><span>best</span></div>
+        <div className="lb-head" style={{ gridTemplateColumns: '1fr auto auto 28px' }}><span>scheme</span><span>runs</span><span>best</span><span /></div>
         {byScheme.map((s, i) => (
-          <div className="lb-row" key={i} style={{ gridTemplateColumns: '1fr auto auto' }}>
+          <div className="lb-row" key={i} style={{ gridTemplateColumns: '1fr auto auto 28px' }}>
             <span className="lb-name" title={s.desc}>{s.desc}</span><span className="mono">{s.n}</span><span className="mono">{s.best}</span>
+            <button className="lb-try" title="Play this scheme" onClick={() => useScheme(s.scheme)}><PlayCircle size={16} /></button>
           </div>
         ))}
       </div>

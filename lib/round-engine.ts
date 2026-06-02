@@ -44,7 +44,8 @@ export function clickBin(r: Round, clicked: Bin, nowMs: number): { state: Round;
     target: r.target, targetDisplay: r.targetDisplay,
     startMs: r.findStartMs, endMs: nowMs, wrongClicks: r.currentWrong,
   }];
-  const next = pickTarget(r.tower, r.rng);
+  let next = pickTarget(r.tower, r.rng);   // never repeat the same address back-to-back
+  for (let guard = 0; guard < 30 && sameBin(next, r.target); guard++) next = pickTarget(r.tower, r.rng);
   return {
     state: {
       ...r, clicks, finds, currentWrong: 0,
