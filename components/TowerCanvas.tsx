@@ -36,7 +36,10 @@ function inPoly(pt: P2, poly: P2[]): boolean {
 }
 const key = (b: Bin) => `${b.column}-${b.rowFromTop}-${b.leftRank}`;
 
-export interface TowerHandle { onCorrect: (b: Bin) => void; onWrong: (b: Bin) => void; reset: () => void; twirl: () => void; }
+export interface TowerHandle {
+  onCorrect: (b: Bin) => void; onWrong: (b: Bin) => void; reset: () => void; twirl: () => void;
+  demo: (b: Bin | null) => void; randomVisibleBin: () => Bin | null;
+}
 const TWIRL_MS = 1500, TWIRL_TURNS = -3 * 2 * Math.PI;
 const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 interface BinPoly { bin: Bin; poly: P2[]; }
@@ -50,6 +53,7 @@ const TowerCanvas = forwardRef<TowerHandle, Props>(function TowerCanvas(
   const drag = useRef({ active: false, lastX: 0, moved: 0 });
   const greens = useRef<Map<string, number>>(new Map());
   const reds = useRef<Set<string>>(new Set());
+  const demoKey = useRef<string | null>(null);   // solid green for the home demo
   const twirl = useRef<{ t0: number; from: number } | null>(null);
   const raf = useRef<number | null>(null);
   const props = useRef({ tower, appearance, autoSpin });
@@ -58,6 +62,7 @@ const TowerCanvas = forwardRef<TowerHandle, Props>(function TowerCanvas(
   function binFill(b: Bin, brightness: number): string {
     const ap = props.current.appearance;
     if (reds.current.has(key(b))) return RED;
+    if (demoKey.current === key(b)) return css(GREEN);
     const factor = ap.solid ? 0.55 + 0.45 * Math.max(0, Math.min(1, brightness)) : 1;
     const baseRgb = mix([0, 0, 0], hex2rgb(ap.binColor), factor);
     const t0 = greens.current.get(key(b));
@@ -159,8 +164,10 @@ const TowerCanvas = forwardRef<TowerHandle, Props>(function TowerCanvas(
   useImperativeHandle(ref, () => ({
     onCorrect: (b) => { reds.current.clear(); greens.current.set(key(b), performance.now()); startLoop(); },
     onWrong: (b) => { reds.current.add(key(b)); draw(); },
-    reset: () => { greens.current.clear(); reds.current.clear(); draw(); },
+    reset: () => { greens.current.clear(); reds.current.clear(); demoKey.current = null; draw(); },
     twirl: () => { twirl.current = { t0: performance.now(), from: theta.current }; startLoop(); },
+    demo: (b) => { demoKey.current = b ? key(b) : null; draw(); },
+    randomVisibleBin: () => { const a = binPolys.current; return a.length ? a[Math.floor(Math.random() * a.length)].bin : null; },
   }));
 
   useEffect(() => {

@@ -14,8 +14,8 @@ const SHAPES: Record<HandedPos, string> = {
   M: 'M2,2 H98 V98 H2 Z',
   L: 'M30,2 H98 V98 H30 L2,50 Z',
   R: 'M2,2 H70 L98,50 L70,98 H2 Z',
-  LM: 'M50,2 H98 V98 H50 A48,48 0 0 1 50,2 Z',
-  RM: 'M2,2 H50 A48,48 0 0 1 50,98 H2 Z',
+  LM: 'M48,2 H98 V98 H48 A38,48 0 0 1 48,2 Z',
+  RM: 'M2,2 H52 A38,48 0 0 1 52,98 H2 Z',
   WAIT: 'M2,2 H98 V98 H2 Z',
 };
 

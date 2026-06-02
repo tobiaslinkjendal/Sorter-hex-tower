@@ -9,7 +9,7 @@ import { store } from '@/lib/store';
 import { Scheme, Segment, schemeKey, randomizeScheme, orderCode, cardSignature } from '@/lib/scheme';
 import { computeScore } from '@/lib/score';
 import { Appearance, defaultAppearance, loadAppearance, saveAppearance } from '@/lib/appearance';
-import { buildTower, addressOf, Bin } from '@/lib/tower-model';
+import { buildTower, addressOf, pickTarget, Bin } from '@/lib/tower-model';
 import { createRound, clickBin, isOver, summarize, isValidRound, Round, Summary } from '@/lib/round-engine';
 import { playSound } from '@/lib/sound';
 
@@ -81,6 +81,9 @@ export default function HomePage() {
   const [cdFrac, setCdFrac] = useState(0);
   const [cdText, setCdText] = useState('3');
   const [cardTarget, setCardTarget] = useState<Bin | null>(null);
+  const [demoTarget, setDemoTarget] = useState<Bin | null>(null);
+  const [demoFade, setDemoFade] = useState(false);
+  const [cdSegs, setCdSegs] = useState<Segment[] | null>(null);
   const [green, setGreen] = useState(0);
   const [red, setRed] = useState(0);
   const [anim, setAnim] = useState<{ type: 'jump' | 'shake' | null; key: number }>({ type: null, key: 0 });
@@ -141,7 +144,8 @@ export default function HomePage() {
   function begin(timed: boolean) {
     store.name = name.trim() || null; store.scheme = scheme;
     if (name.trim()) localStorage.setItem('hex_name', name.trim());
-    setGreen(0); setRed(0); setCardTarget(null);
+    setGreen(0); setRed(0); setCardTarget(null); setDemoTarget(null);
+    towerApi.current?.reset(); towerApi.current?.twirl();   // same twirl as on finish, clears marks
     setCollapsed(true); setResCollapsed(true); setPhase('countdown'); setCdFrac(0); setCdText('3');
     // Each number: fast overshoot (~100ms) then settle back over ~900ms. No "GO".
     const start = performance.now();
@@ -161,7 +165,7 @@ export default function HomePage() {
     towerApi.current?.reset();
     roundRef.current = createRound(playTower, dur, Math.random, performance.now());
     done.current = false; lastTick.current = 0;
-    setCardTarget(roundRef.current.target);
+    setCardTarget(roundRef.current.target); setCdSegs(null); setDemoFade(false);
     setRemaining(appearance.durationS); setFrac(1);
     setPhase(timed ? 'play' : 'practice');
     playSound('start', appearance.sound);
@@ -192,6 +196,32 @@ export default function HomePage() {
     const id = setInterval(() => setPracticeTick(t => t + 1), 1000);
     return () => clearInterval(id);
   }, [phase]);
+
+  // Home: live demo — jump to a random visible bin (marked green), hold, fade, repeat.
+  useEffect(() => {
+    if (phase !== 'home') return;
+    let alive = true; const timers: number[] = [];
+    const cycle = () => {
+      if (!alive) return;
+      setAnim(a => ({ type: 'jump', key: a.key + 1 }));
+      setDemoFade(false);
+      timers.push(window.setTimeout(() => { const b = towerApi.current?.randomVisibleBin(); if (b) { setDemoTarget(b); towerApi.current?.demo(b); } }, JUMP_APEX));
+      timers.push(window.setTimeout(() => setDemoFade(true), 2000));
+      timers.push(window.setTimeout(cycle, 3000));
+    };
+    cycle();
+    return () => { alive = false; timers.forEach(t => clearTimeout(t)); towerApi.current?.demo(null); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, tower]);
+
+  // Countdown: flash through ~3 random tags/sec (no bin marking) until GO.
+  useEffect(() => {
+    if (phase !== 'countdown') return;
+    const pick = () => setCdSegs(addressOf(tower, pickTarget(tower, Math.random)).segments);
+    pick();
+    const id = setInterval(pick, 333);
+    return () => clearInterval(id);
+  }, [phase, tower]);
 
   async function finish() {
     done.current = true;
@@ -244,7 +274,10 @@ export default function HomePage() {
     }
   }
 
-  const cardSegs = inRound && cardTarget ? addressOf(tower, cardTarget).segments : placeholderSegments(scheme);
+  const cardSegs = inRound && cardTarget ? addressOf(tower, cardTarget).segments
+    : phase === 'countdown' && cdSegs ? cdSegs
+      : phase === 'home' && demoTarget ? addressOf(tower, demoTarget).segments
+        : placeholderSegments(scheme);
   const rows = boardTab === 'overall' ? board?.overall : schemeBoards[boardTab];
 
   // Practice: live seconds-per-bin over the last 15s (recomputed each practiceTick).
@@ -385,7 +418,8 @@ export default function HomePage() {
               ))
               : <div className="score"><span className="g">{green}</span><span className="r">{red}</span>
                 {phase === 'practice' && <span style={{ color: spbColor(spb), fontSize: 22 }}>{spb == null ? '—' : spb.toFixed(1)} s/bin</span>}</div>}
-            <div key={anim.key} className={`card ${anim.type ?? ''}`}>
+            <div key={anim.key} className={`card ${anim.type ?? ''}`}
+              style={{ opacity: phase === 'home' && demoFade ? 0 : 1, transition: demoFade ? 'opacity 1s linear' : 'none' }}>
               <AddressPrompt segments={cardSegs} colorblind={appearance.colorblind} />
             </div>
           </div>
