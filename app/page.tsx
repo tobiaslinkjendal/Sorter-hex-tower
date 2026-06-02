@@ -6,7 +6,7 @@ import Configurator from '@/components/Configurator';
 import AddressPrompt from '@/components/AddressPrompt';
 import TowerCanvas, { TowerHandle } from '@/components/TowerCanvas';
 import { store } from '@/lib/store';
-import { Scheme, Segment, schemeKey, randomizeScheme } from '@/lib/scheme';
+import { Scheme, Segment, schemeKey, randomizeScheme, orderCode, cardSignature } from '@/lib/scheme';
 import { Appearance, defaultAppearance, loadAppearance, saveAppearance } from '@/lib/appearance';
 import { buildTower, addressOf, Bin } from '@/lib/tower-model';
 import { createRound, clickBin, isOver, summarize, isValidRound, Round, Summary } from '@/lib/round-engine';
@@ -67,6 +67,8 @@ export default function HomePage() {
 
   const [board, setBoard] = useState<Board | null>(null);
   const [schemeBoards, setSchemeBoards] = useState<Record<string, LRow[]>>({});
+  const [layoutBoard, setLayoutBoard] = useState<LRow[] | null>(null);
+  const [showOC, setShowOC] = useState(false);
   const [summary, setSummary] = useState<Sum | null>(null);
   const [popular, setPopular] = useState<PopRow[]>([]);
   const [boardTab, setBoardTab] = useState<string>('overall');
@@ -78,7 +80,7 @@ export default function HomePage() {
   const autoSpin = phase === 'home' && appearance.autospin;
   const startLabel = `${hasRun ? 'Replay' : 'Start'} ${appearance.durationS}s`;
 
-  async function loadBoards(pops: PopRow[]) {
+  async function loadBoards(pops: PopRow[], sc: Scheme) {
     try {
       setBoard(await (await fetch('/api/leaderboard')).json());
       const map: Record<string, LRow[]> = {};
@@ -87,6 +89,8 @@ export default function HomePage() {
         map[p.schemeKey] = r.perScheme ?? [];
       }));
       setSchemeBoards(map);
+      const lay = await (await fetch(`/api/leaderboard?layers=${sc.layers}&bps=${encodeURIComponent(String(sc.binsPerSection))}`)).json();
+      setLayoutBoard(lay.layout ?? []);
     } catch { /* offline */ }
   }
 
@@ -94,7 +98,9 @@ export default function HomePage() {
     const n = localStorage.getItem('hex_name'); if (n) setName(n);
     setAppearance(loadAppearance());
     try { const raw = localStorage.getItem('hex_last'); if (raw) setSummary(JSON.parse(raw).summary); } catch { /* ignore */ }
-    fetch('/api/popular').then(r => r.json()).then(d => { const p = d.popular ?? []; setPopular(p); loadBoards(p); }).catch(() => {});
+    let sc = store.scheme;
+    try { const ap = localStorage.getItem('hex_apply_scheme'); if (ap) { sc = JSON.parse(ap); setScheme(sc); setSeed(rseed()); localStorage.removeItem('hex_apply_scheme'); } } catch { /* ignore */ }
+    fetch('/api/popular').then(r => r.json()).then(d => { const p = d.popular ?? []; setPopular(p); loadBoards(p, sc); }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -172,6 +178,7 @@ export default function HomePage() {
     const finalSum: Sum = { ...sum, score };
     setSummary(finalSum);
     try { localStorage.setItem('hex_last', JSON.stringify({ summary: finalSum, schemeKey: key })); } catch { /* ignore */ }
+    towerApi.current?.reset();   // clear any leftover red/green so the idle tower is clean
     towerApi.current?.twirl();
     setPhase('home'); setCollapsed(true); setResCollapsed(false);
     setHasRun(true); setShowButtons(false);
@@ -182,7 +189,7 @@ export default function HomePage() {
         body: JSON.stringify({ name: store.name, scheme, durationS: appearance.durationS, summary: { ...sum, score, valid, finds } }),
       });
       const p = (await (await fetch('/api/popular')).json()).popular ?? [];
-      setPopular(p); loadBoards(p);
+      setPopular(p); loadBoards(p, scheme);
     } catch { /* offline */ }
   }
 
@@ -209,6 +216,10 @@ export default function HomePage() {
   const cardSegs = inRound && cardTarget ? addressOf(tower, cardTarget).segments : placeholderSegments(scheme);
   const rows = boardTab === 'overall' ? board?.overall : schemeBoards[boardTab];
 
+  const nameCell = (n: string | null) => n
+    ? <Link className="lb-name" href={`/user?name=${encodeURIComponent(n)}`}>{n}</Link>
+    : <span className="lb-name">anon</span>;
+
   const board_ = (
     <>
       <div className="lb-tabs">
@@ -224,13 +235,40 @@ export default function HomePage() {
         {(rows ?? []).map((r, i) => (
           <div className={`lb-row ${r.name === store.name && r.score === summary?.score ? 'me' : ''}`} key={i}>
             <span className="mono">{i + 1}</span>
-            <span className="lb-name">{r.name ?? 'anon'}</span>
+            {nameCell(r.name)}
             <span className="mono">{r.score}</span>
             <span className="mono">{Math.round(r.accuracy * 100)}%</span>
             <button className="lb-try" title="Try this scheme" onClick={() => applyScheme(r.scheme)}><ArrowClockwise size={14} /></button>
           </div>
         ))}
         {(!rows || rows.length === 0) && <div className="lb-row"><span /><span className="hint">No valid rounds yet.</span><span /><span /><span /></div>}
+      </div>
+    </>
+  );
+
+  const ocCols = showOC ? '24px 1fr auto auto auto auto 28px' : '24px 1fr auto auto 28px';
+  const layoutTbl = (
+    <>
+      <p className="label-up" style={{ marginTop: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span>This layout — L{scheme.layers} / {String(scheme.binsPerSection)}</span>
+        <button className="ghost" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setShowOC(v => !v)}>{showOC ? 'hide' : 'order/card'}</button>
+      </p>
+      <div className="lb">
+        <div className="lb-head" style={{ gridTemplateColumns: ocCols }}>
+          <span>#</span><span>name</span>{showOC && <span>order</span>}{showOC && <span>card</span>}<span>score</span><span>acc</span><span />
+        </div>
+        {(layoutBoard ?? []).map((r, i) => (
+          <div className={`lb-row ${r.name === store.name && r.score === summary?.score ? 'me' : ''}`} key={i} style={{ gridTemplateColumns: ocCols }}>
+            <span className="mono">{i + 1}</span>
+            {nameCell(r.name)}
+            {showOC && <span className="mono">{orderCode(r.scheme)}</span>}
+            {showOC && <span className="mono">{cardSignature(r.scheme)}</span>}
+            <span className="mono">{r.score}</span>
+            <span className="mono">{Math.round(r.accuracy * 100)}%</span>
+            <button className="lb-try" title="Try this scheme" onClick={() => applyScheme(r.scheme)}><ArrowClockwise size={14} /></button>
+          </div>
+        ))}
+        {(!layoutBoard || layoutBoard.length === 0) && <div className="lb-row" style={{ gridTemplateColumns: ocCols }}><span /><span className="hint">No rounds for this layout.</span></div>}
       </div>
     </>
   );
@@ -322,6 +360,7 @@ export default function HomePage() {
               {summary.score > board.averageScore ? ' — you beat it.' : ''}</p>
           )}
           {board_}
+          {layoutTbl}
           <Link href="/analytics" className="btnlink" style={{ marginTop: 14 }}>Advanced results →</Link>
         </div>
       </aside>

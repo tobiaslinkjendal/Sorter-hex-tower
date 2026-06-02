@@ -55,9 +55,12 @@ export function clickBin(r: Round, clicked: Bin, nowMs: number): { state: Round;
 }
 
 export function summarize(r: Round): Summary {
+  // Count only clicks that belong to COMPLETED finds, so trailing wrong clicks on
+  // an unfinished final target (when time runs out) don't skew accuracy. This keeps
+  // the result panel, the saved row, and the stored clicks consistent.
   const findsCount = r.finds.length;
-  const wrongClicksTotal = r.clicks.filter(c => !c.isCorrect).length;
-  const correct = r.clicks.filter(c => c.isCorrect).length;
+  const wrongClicksTotal = r.finds.reduce((a, f) => a + f.wrongClicks, 0);
+  const correct = findsCount;
   const totalClicks = correct + wrongClicksTotal;
   const accuracy = totalClicks === 0 ? 0 : correct / totalClicks;
   const avgTimeMs = findsCount === 0 ? 0

@@ -76,6 +76,14 @@ export function binSegment(s: Scheme, leftRank: number, count: number): Segment 
   return { kind: 'text', value: symbol(s.binType, display) };
 }
 
+const DIM_CODE: Record<Dim, string> = { column: 'C', layer: 'L', bin: 'B' };
+const TYPE_CHAR: Record<string, string> = { color: 'c', letter: 'x', number: '0', icon: '?', handed: 'h' };
+export function orderCode(s: Scheme): string { return s.order.map(d => DIM_CODE[d]).join(''); }
+export function cardSignature(s: Scheme): string {
+  const t: Record<Dim, string> = { column: s.columnType, layer: s.layerType, bin: s.binType };
+  return s.order.map(d => TYPE_CHAR[t[d]] ?? '?').join('·');
+}
+
 export function schemeKey(s: Scheme): string {
   return [
     s.order.join('>'), `c:${s.columnType}`, `l:${s.layerType}`, `b:${s.binType}`,

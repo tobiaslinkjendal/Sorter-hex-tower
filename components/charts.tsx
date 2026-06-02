@@ -52,6 +52,24 @@ export function Histogram({ title, values, bins = 12, fmt }: { title: string; va
   );
 }
 
+export function Trend({ title, points, fmt }: { title: string; points: number[]; fmt: (v: number) => string }) {
+  if (points.length < 2) return <div className="card-box"><h3>{title}</h3><p className="hint">Need at least 2 games.</p></div>;
+  const min = Math.min(...points), max = Math.max(...points), span = max - min || 1;
+  const W = 300, H = 90;
+  const pts = points.map((p, i) => `${(i / (points.length - 1)) * W},${H - ((p - min) / span) * H}`).join(' ');
+  return (
+    <div className="card-box">
+      <h3>{title}</h3>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 100 }} preserveAspectRatio="none">
+        <polyline points={pts} fill="none" stroke="#111" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+      </svg>
+      <div style={{ display: 'flex', justifyContent: 'space-between' }} className="hint">
+        <span>first {fmt(points[0])}</span><span>latest {fmt(points[points.length - 1])}</span>
+      </div>
+    </div>
+  );
+}
+
 export function Heatmap({ title, rows, cols, values, fmt }:
   { title: string; rows: string[]; cols: string[]; values: (number | null)[][]; fmt: (v: number) => string }) {
   const flat = values.flat().filter((v): v is number => v != null);

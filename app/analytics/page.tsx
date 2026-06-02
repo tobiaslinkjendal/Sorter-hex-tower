@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Scheme } from '@/lib/scheme';
 import { StatCard, BarChart, Histogram, Heatmap, Datum } from '@/components/charts';
@@ -58,9 +59,12 @@ export default function AnalyticsPage() {
   const [sel, setSel] = useState<Record<string, string>>({});
   const [metric, setMetric] = useState<Metric>('findtime');
 
+  const router = useRouter();
   useEffect(() => {
     fetch('/api/analytics').then(r => r.json()).then(d => {
-      setRounds(d.rounds ?? []); setFinds(d.finds ?? []); setClicks(d.clicks ?? []); setLoading(false);
+      // Drop zero-score rounds — those are aborted/broken and shouldn't count.
+      setRounds((d.rounds ?? []).filter((r: RoundRow) => r.score > 0));
+      setFinds(d.finds ?? []); setClicks(d.clicks ?? []); setLoading(false);
     }).catch(() => setLoading(false));
   }, []);
 
@@ -88,16 +92,31 @@ export default function AnalyticsPage() {
 
   // best / worst schemes by avg find time (>=2 rounds)
   const schemeAgg = useMemo(() => {
-    const m = new Map<string, { sumT: number; nT: number; acc: number[]; n: number; desc: string }>();
+    const m = new Map<string, { sumT: number; nT: number; acc: number[]; n: number; desc: string; scheme: Scheme }>();
     for (const r of fRounds) {
-      const e = m.get(r.scheme_key) ?? { sumT: 0, nT: 0, acc: [], n: 0, desc: `${r.scheme.order.map(d => d[0].toUpperCase()).join('')} · ${r.scheme.columnType}/${r.scheme.layerType}/${r.scheme.binType} · L${r.scheme.layers}/${r.scheme.binsPerSection}` };
+      const e = m.get(r.scheme_key) ?? { sumT: 0, nT: 0, acc: [], n: 0, scheme: r.scheme, desc: `${r.scheme.order.map(d => d[0].toUpperCase()).join('')} · ${r.scheme.columnType}/${r.scheme.layerType}/${r.scheme.binType} · L${r.scheme.layers}/${r.scheme.binsPerSection}` };
       if (r.finds_count > 0) { e.sumT += r.duration_s * 1000 / r.finds_count; e.nT++; }
       e.acc.push(r.accuracy); e.n++; m.set(r.scheme_key, e);
     }
     return [...m.values()].filter(e => e.n >= 2 && e.nT > 0)
-      .map(e => ({ desc: e.desc, t: e.sumT / e.nT, acc: avg(e.acc) * 100, n: e.n }))
+      .map(e => ({ desc: e.desc, scheme: e.scheme, t: e.sumT / e.nT, acc: avg(e.acc) * 100, n: e.n }))
       .sort((a, b) => a.t - b.t);
   }, [fRounds]);
+
+  const usersAgg = useMemo(() => {
+    const m = new Map<string, { games: number; best: number; acc: number[]; find: number[] }>();
+    for (const r of fRounds) {
+      const k = r.name ?? 'anon';
+      const e = m.get(k) ?? { games: 0, best: 0, acc: [], find: [] };
+      e.games++; e.best = Math.max(e.best, r.score); e.acc.push(r.accuracy);
+      if (r.finds_count > 0) e.find.push(r.duration_s * 1000 / r.finds_count);
+      m.set(k, e);
+    }
+    return [...m.entries()].map(([name, e]) => ({ name, games: e.games, best: e.best, acc: avg(e.acc) * 100, find: avg(e.find) }))
+      .sort((a, b) => b.games - a.games);
+  }, [fRounds]);
+
+  function useScheme(s: Scheme) { try { localStorage.setItem('hex_apply_scheme', JSON.stringify(s)); } catch { /* ignore */ } router.push('/'); }
 
   const heatTime = useMemo(() => buildHeat(fFinds, f => f.target_layer, f => f.target_bin, f => f.time_ms), [fFinds]);
   const heatErr = useMemo(() => buildHeat(fFinds, f => f.target_layer, f => f.target_bin, f => (f.wrong_clicks > 0 ? 1 : 0)), [fFinds]);
@@ -184,13 +203,26 @@ export default function AnalyticsPage() {
         </>
       )}
 
+      <h2 style={{ margin: '18px 0 10px', fontSize: 15 }}>Players</h2>
+      <div className="card-box">
+        <div className="lb-head" style={{ gridTemplateColumns: '1fr auto auto auto auto' }}><span>name</span><span>games</span><span>best</span><span>acc</span><span>find</span></div>
+        {usersAgg.map((u, i) => (
+          <div className="lb-row" key={i} style={{ gridTemplateColumns: '1fr auto auto auto auto' }}>
+            {u.name === 'anon' ? <span className="lb-name">anon</span> : <Link className="lb-name" href={`/user?name=${encodeURIComponent(u.name)}`}>{u.name}</Link>}
+            <span className="mono">{u.games}</span><span className="mono">{u.best}</span><span className="mono">{pct(u.acc)}</span><span className="mono">{msToS(u.find)}</span>
+          </div>
+        ))}
+        {usersAgg.length === 0 && <p className="hint">No players yet.</p>}
+      </div>
+
       <h2 style={{ margin: '18px 0 10px', fontSize: 15 }}>Schemes ranked by avg find time (≥2 rounds)</h2>
       <div className="card-box">
-        <div className="lb-head" style={{ gridTemplateColumns: '1fr auto auto auto' }}><span>scheme</span><span>find time</span><span>acc</span><span>n</span></div>
-        {schemeAgg.slice(0, 15).map((s, i) => (
-          <div className="lb-row" key={i} style={{ gridTemplateColumns: '1fr auto auto auto' }}>
+        <div className="lb-head" style={{ gridTemplateColumns: '1fr auto auto auto auto' }}><span>scheme</span><span>find time</span><span>acc</span><span>n</span><span /></div>
+        {schemeAgg.slice(0, 20).map((s, i) => (
+          <div className="lb-row" key={i} style={{ gridTemplateColumns: '1fr auto auto auto auto' }}>
             <span className="lb-name" title={s.desc}>{s.desc}</span>
             <span className="mono">{msToS(s.t)}</span><span className="mono">{pct(s.acc)}</span><span className="mono">{s.n}</span>
+            <button className="ghost" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => useScheme(s.scheme)}>Use</button>
           </div>
         ))}
         {schemeAgg.length === 0 && <p className="hint">Not enough data yet.</p>}
