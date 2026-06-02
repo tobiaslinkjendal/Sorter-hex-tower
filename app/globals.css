@@ -150,6 +150,8 @@ input[type="range"] { width: 100%; accent-color: #111; }
 .card.jump { animation: jump 360ms cubic-bezier(.3,.8,.3,1); }
 .card.shake { animation: shake 300ms ease-in-out; }
 @keyframes jump { 0% { transform: translateY(0); } 47% { transform: translateY(-26px); } 100% { transform: translateY(0); } }
+.card.jump-sm { animation: jumpsm 340ms cubic-bezier(.3,.8,.3,1); }
+@keyframes jumpsm { 0% { transform: translateY(0); } 47% { transform: translateY(-13px); } 100% { transform: translateY(0); } }
 @keyframes shake { 0% { transform: translateX(0); } 33% { transform: translateX(-5px); } 66% { transform: translateX(5px); } 100% { transform: translateX(0); } }
 
 .start-btn { font-size: 18px; padding: 12px 28px; }

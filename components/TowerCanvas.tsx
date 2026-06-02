@@ -38,7 +38,7 @@ const key = (b: Bin) => `${b.column}-${b.rowFromTop}-${b.leftRank}`;
 
 export interface TowerHandle {
   onCorrect: (b: Bin) => void; onWrong: (b: Bin) => void; reset: () => void; twirl: () => void;
-  demo: (b: Bin | null) => void; randomVisibleBin: () => Bin | null;
+  demo: (b: Bin | null) => void; demoFade: () => void; randomVisibleBin: () => Bin | null;
 }
 const TWIRL_MS = 1500, TWIRL_TURNS = -3 * 2 * Math.PI;
 const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
@@ -167,6 +167,7 @@ const TowerCanvas = forwardRef<TowerHandle, Props>(function TowerCanvas(
     reset: () => { greens.current.clear(); reds.current.clear(); demoKey.current = null; draw(); },
     twirl: () => { twirl.current = { t0: performance.now(), from: theta.current }; startLoop(); },
     demo: (b) => { demoKey.current = b ? key(b) : null; draw(); },
+    demoFade: () => { if (demoKey.current) { greens.current.set(demoKey.current, performance.now()); demoKey.current = null; startLoop(); } },
     randomVisibleBin: () => { const a = binPolys.current; return a.length ? a[Math.floor(Math.random() * a.length)].bin : null; },
   }));
 

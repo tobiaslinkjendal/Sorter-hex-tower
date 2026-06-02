@@ -82,11 +82,11 @@ export default function HomePage() {
   const [cdText, setCdText] = useState('3');
   const [cardTarget, setCardTarget] = useState<Bin | null>(null);
   const [demoTarget, setDemoTarget] = useState<Bin | null>(null);
-  const [demoFade, setDemoFade] = useState(false);
   const [cdSegs, setCdSegs] = useState<Segment[] | null>(null);
+  const demoTimers = useRef<number[]>([]);
   const [green, setGreen] = useState(0);
   const [red, setRed] = useState(0);
-  const [anim, setAnim] = useState<{ type: 'jump' | 'shake' | null; key: number }>({ type: null, key: 0 });
+  const [anim, setAnim] = useState<{ type: 'jump' | 'jump-sm' | 'shake' | null; key: number }>({ type: null, key: 0 });
 
   const [board, setBoard] = useState<Board | null>(null);
   const [schemeBoards, setSchemeBoards] = useState<Record<string, LRow[]>>({});
@@ -165,7 +165,7 @@ export default function HomePage() {
     towerApi.current?.reset();
     roundRef.current = createRound(playTower, dur, Math.random, performance.now());
     done.current = false; lastTick.current = 0;
-    setCardTarget(roundRef.current.target); setCdSegs(null); setDemoFade(false);
+    setCardTarget(roundRef.current.target); setCdSegs(null);
     setRemaining(appearance.durationS); setFrac(1);
     setPhase(timed ? 'play' : 'practice');
     playSound('start', appearance.sound);
@@ -197,20 +197,21 @@ export default function HomePage() {
     return () => clearInterval(id);
   }, [phase]);
 
-  // Home: live demo — jump to a random visible bin (marked green), hold, fade, repeat.
+  // Home/result demo: small jump → a bin (random, or one the user clicks), marked
+  // green for 4s; the green fades over the last second, then a new random bin.
+  function demoStep(bin: Bin | null) {
+    demoTimers.current.forEach(t => clearTimeout(t));
+    setAnim(a => ({ type: 'jump-sm', key: a.key + 1 }));
+    demoTimers.current = [
+      window.setTimeout(() => { const b = bin ?? towerApi.current?.randomVisibleBin() ?? null; if (b) { setDemoTarget(b); towerApi.current?.demo(b); } }, JUMP_APEX),
+      window.setTimeout(() => towerApi.current?.demoFade(), 3000),
+      window.setTimeout(() => demoStep(null), 4000),
+    ];
+  }
   useEffect(() => {
     if (phase !== 'home') return;
-    let alive = true; const timers: number[] = [];
-    const cycle = () => {
-      if (!alive) return;
-      setAnim(a => ({ type: 'jump', key: a.key + 1 }));
-      setDemoFade(false);
-      timers.push(window.setTimeout(() => { const b = towerApi.current?.randomVisibleBin(); if (b) { setDemoTarget(b); towerApi.current?.demo(b); } }, JUMP_APEX));
-      timers.push(window.setTimeout(() => setDemoFade(true), 2000));
-      timers.push(window.setTimeout(cycle, 3000));
-    };
-    cycle();
-    return () => { alive = false; timers.forEach(t => clearTimeout(t)); towerApi.current?.demo(null); };
+    demoStep(null);
+    return () => { demoTimers.current.forEach(t => clearTimeout(t)); demoTimers.current = []; towerApi.current?.demo(null); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, tower]);
 
@@ -255,6 +256,7 @@ export default function HomePage() {
   }
 
   function onPick(bin: Bin) {
+    if (phase === 'home') { demoStep(bin); return; }   // start/result screen: click a bin to preview its tag
     if (!inRound || done.current) return;
     const res = clickBin(roundRef.current!, bin, performance.now());
     roundRef.current = res.state;
@@ -419,13 +421,15 @@ export default function HomePage() {
               : <div className="score"><span className="g">{green}</span><span className="r">{red}</span>
                 {phase === 'practice' && <span style={{ color: spbColor(spb), fontSize: 22 }}>{spb == null ? '—' : spb.toFixed(1)} s/bin</span>}</div>}
             <div key={anim.key} className={`card ${anim.type ?? ''}`}
-              style={{ opacity: phase === 'home' && demoFade ? 0 : 1, transition: demoFade ? 'opacity 1s linear' : 'none' }}>
+              style={{ cursor: phase === 'home' ? 'pointer' : 'default' }}
+              onClick={() => { if (phase === 'home') demoStep(null); }}
+              title={phase === 'home' ? 'Click for another random bin' : undefined}>
               <AddressPrompt segments={cardSegs} colorblind={appearance.colorblind} />
             </div>
           </div>
           <div className="canvas-wrap">
             <TowerCanvas ref={towerApi} tower={tower} appearance={appearance} onPick={onPick}
-              pickable={inRound} autoSpin={autoSpin} />
+              pickable={inRound || phase === 'home'} autoSpin={autoSpin} />
           </div>
         </div>
       </main>

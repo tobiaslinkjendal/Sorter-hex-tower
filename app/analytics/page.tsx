@@ -63,6 +63,8 @@ export default function AnalyticsPage() {
   const [cmpA, setCmpA] = useState('');
   const [cmpB, setCmpB] = useState('');
   const [cmpN, setCmpN] = useState(10);
+  const [playersWin, setPlayersWin] = useState(0); // 0 = all
+  const [playersSort, setPlayersSort] = useState<'games' | 'best' | 'acc' | 'find'>('games');
 
   const router = useRouter();
   useEffect(() => {
@@ -108,17 +110,20 @@ export default function AnalyticsPage() {
   }, [fRounds]);
 
   const usersAgg = useMemo(() => {
-    const m = new Map<string, { games: number; best: number; acc: number[]; find: number[] }>();
-    for (const r of fRounds) {
-      const k = r.name ?? 'anon';
-      const e = m.get(k) ?? { games: 0, best: 0, acc: [], find: [] };
-      e.games++; e.best = Math.max(e.best, r.score); e.acc.push(r.accuracy);
-      if (r.finds_count > 0) e.find.push(r.duration_s * 1000 / r.finds_count);
-      m.set(k, e);
-    }
-    return [...m.entries()].map(([name, e]) => ({ name, games: e.games, best: e.best, acc: avg(e.acc) * 100, find: avg(e.find) }))
-      .sort((a, b) => b.games - a.games);
-  }, [fRounds]);
+    const m = new Map<string, RoundRow[]>();
+    for (const r of fRounds) { const k = r.name ?? 'anon'; const a = m.get(k); if (a) a.push(r); else m.set(k, [r]); }
+    const out = [...m.entries()].map(([name, rs]) => {
+      const slice = playersWin ? rs.slice(0, playersWin) : rs;  // fRounds is newest-first
+      return {
+        name, games: slice.length, best: slice.length ? Math.max(...slice.map(r => r.score)) : 0,
+        acc: avg(slice.map(r => r.accuracy)) * 100,
+        find: avg(slice.map(r => r.finds_count > 0 ? r.duration_s * 1000 / r.finds_count : 0)),
+      };
+    });
+    out.sort((a, b) => playersSort === 'find' ? (a.find || Infinity) - (b.find || Infinity)
+      : playersSort === 'acc' ? b.acc - a.acc : playersSort === 'best' ? b.best - a.best : b.games - a.games);
+    return out;
+  }, [fRounds, playersWin, playersSort]);
 
   function useScheme(s: Scheme) { try { localStorage.setItem('hex_apply_scheme', JSON.stringify(s)); } catch { /* ignore */ } router.push('/'); }
 
@@ -255,8 +260,21 @@ export default function AnalyticsPage() {
       )}
 
       <h2 style={{ margin: '18px 0 10px', fontSize: 15 }}>Players</h2>
+      <div className="an-filters" style={{ marginBottom: 12 }}>
+        <label style={{ fontSize: 12 }}><span className="label-up" style={{ display: 'block' }}>Window</span>
+          <select value={playersWin} onChange={e => setPlayersWin(+e.target.value)}>
+            <option value={0}>all games</option>{[5, 10, 30, 50].map(n => <option key={n} value={n}>last {n}</option>)}
+          </select></label>
+        <span className="hint" style={{ alignSelf: 'flex-end' }}>Click a column to sort.</span>
+      </div>
       <div className="card-box">
-        <div className="lb-head" style={{ gridTemplateColumns: '1fr auto auto auto auto' }}><span>name</span><span>games</span><span>best</span><span>acc</span><span>find</span></div>
+        {(() => {
+          const H = ({ k, label }: { k: typeof playersSort; label: string }) =>
+            <span style={{ cursor: 'pointer', color: playersSort === k ? 'var(--ink)' : 'var(--muted)' }} onClick={() => setPlayersSort(k)}>{label}{playersSort === k ? ' ▾' : ''}</span>;
+          return <div className="lb-head" style={{ gridTemplateColumns: '1fr auto auto auto auto' }}>
+            <span>name</span><H k="games" label="games" /><H k="best" label="best" /><H k="acc" label="acc" /><H k="find" label="find" />
+          </div>;
+        })()}
         {usersAgg.map((u, i) => (
           <div className="lb-row" key={i} style={{ gridTemplateColumns: '1fr auto auto auto auto' }}>
             {u.name === 'anon' ? <span className="lb-name">anon</span> : <Link className="lb-name" href={`/user?name=${encodeURIComponent(u.name)}`}>{u.name}</Link>}
@@ -277,16 +295,24 @@ export default function AnalyticsPage() {
       </div>
       {cmpA && cmpB ? (() => {
         const a = cmpStats(cmpA), b = cmpStats(cmpB);
-        const row = (label: string, av: string, bv: string) => (
-          <div className="lb-row" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}><span>{label}</span><span className="mono">{av}</span><span className="mono">{bv}</span></div>);
+        const GREEN = '#1f9d3a';
+        const row = (label: string, av: number, bv: number, hi: boolean, fmt: (n: number) => string) => {
+          const aw = av !== bv && (hi ? av > bv : av < bv);
+          const bw = av !== bv && (hi ? bv > av : bv < av);
+          return <div className="lb-row" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
+            <span>{label}</span>
+            <span className="mono" style={{ color: aw ? GREEN : undefined }}>{fmt(av)}</span>
+            <span className="mono" style={{ color: bw ? GREEN : undefined }}>{fmt(bv)}</span>
+          </div>;
+        };
         return (
           <div className="card-box" style={{ marginBottom: 8 }}>
             <div className="lb-head" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}><span>metric</span><span>{cmpA}</span><span>{cmpB}</span></div>
-            {row('games', String(a.games), String(b.games))}
-            {row('avg score', a.score.toFixed(1), b.score.toFixed(1))}
-            {row('best score', String(a.best), String(b.best))}
-            {row('avg accuracy', pct(a.acc), pct(b.acc))}
-            {row('avg find time', msToS(a.find), msToS(b.find))}
+            {row('games', a.games, b.games, true, n => String(n))}
+            {row('avg score', a.score, b.score, true, n => n.toFixed(1))}
+            {row('best score', a.best, b.best, true, n => String(n))}
+            {row('avg accuracy', a.acc, b.acc, true, n => pct(n))}
+            {row('avg find time', a.find, b.find, false, n => msToS(n))}
           </div>
         );
       })() : <p className="hint" style={{ marginBottom: 8 }}>Pick two players to compare.</p>}
