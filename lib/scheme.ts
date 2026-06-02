@@ -1,7 +1,7 @@
 export type Dim = 'column' | 'layer' | 'bin';
 export type ColumnType = 'color' | 'letter' | 'number' | 'icon';
 export type LayerType = 'letter' | 'number' | 'icon';
-export type BinType = 'letter' | 'number' | 'icon' | 'handed';
+export type BinType = 'letter' | 'number' | 'icon' | 'handed' | 'media' | 'arrow' | 'shaped';
 export type VDir = 'top' | 'bottom';
 export type HDir = 'left' | 'right';
 export type BinsPerSection = 1 | 2 | 3 | 4 | 5
@@ -18,7 +18,12 @@ export interface Scheme {
   binsPerSection: BinsPerSection;
 }
 
-export type Segment = { kind: 'text'; value: string } | { kind: 'color'; value: string };
+export type HandedPos = 'L' | 'LM' | 'M' | 'RM' | 'R' | 'WAIT';
+export type Segment =
+  | { kind: 'text'; value: string }
+  | { kind: 'color'; value: string }
+  | { kind: 'icon'; set: 'media' | 'arrow'; pos: HandedPos }
+  | { kind: 'shape'; pos: HandedPos };
 
 export const LETTERS = 'ABCDEFGH';
 export const ICONS = ['★','●','▲','■','◆','✚','♥','♦'];
@@ -71,13 +76,18 @@ export function layerSegment(s: Scheme, rowFromTop: number, layers: number): Seg
 }
 
 export function binSegment(s: Scheme, leftRank: number, count: number): Segment {
-  if (s.binType === 'handed') return { kind: 'text', value: handedLabel(leftRank, count) };
+  // handed / media / arrow / shaped all use the absolute symmetric position (ignore binFrom).
+  const pos = handedLabel(leftRank, count) as HandedPos;
+  if (s.binType === 'handed') return { kind: 'text', value: pos };
+  if (s.binType === 'media') return { kind: 'icon', set: 'media', pos };
+  if (s.binType === 'arrow') return { kind: 'icon', set: 'arrow', pos };
+  if (s.binType === 'shaped') return { kind: 'shape', pos };
   const display = s.binFrom === 'left' ? leftRank : count - leftRank + 1;
-  return { kind: 'text', value: symbol(s.binType, display) };
+  return { kind: 'text', value: symbol(s.binType as 'letter' | 'number' | 'icon', display) };
 }
 
 const DIM_CODE: Record<Dim, string> = { column: 'C', layer: 'L', bin: 'B' };
-const TYPE_CHAR: Record<string, string> = { color: 'c', letter: 'x', number: '0', icon: '?', handed: 'h' };
+const TYPE_CHAR: Record<string, string> = { color: 'c', letter: 'x', number: '0', icon: '?', handed: 'h', media: 'i', arrow: 'a', shaped: 's' };
 export function orderCode(s: Scheme): string { return s.order.map(d => DIM_CODE[d]).join(''); }
 export function cardSignature(s: Scheme): string {
   const t: Record<Dim, string> = { column: s.columnType, layer: s.layerType, bin: s.binType };
@@ -104,7 +114,7 @@ export function randomizeScheme(rng: RNG): Scheme {
     order: pick(rng, orders) as [Dim,Dim,Dim],
     columnType: pick(rng, ['color','letter','number','icon'] as ColumnType[]),
     layerType: pick(rng, ['letter','number'] as LayerType[]),
-    binType: pick(rng, ['letter','number','handed'] as BinType[]),
+    binType: pick(rng, ['letter','number','handed','media','arrow','shaped'] as BinType[]),
     layerFrom: pick(rng, ['top','bottom'] as VDir[]),
     binFrom: pick(rng, ['left','right'] as HDir[]),
     layers: 3 + Math.floor(rng() * 6),

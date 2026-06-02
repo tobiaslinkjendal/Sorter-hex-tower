@@ -15,7 +15,7 @@ const BPS: BinsPerSection[] = [1, 2, 3, 4, 5, 'varied-1-2', 'varied-1-3', 'varie
 const LAYER_OPTS = [3, 4, 5, 6, 7, 8];
 const bpsLabel = (v: BinsPerSection) =>
   typeof v === 'number' ? String(v) : '✱ ' + v.replace('varied-', '').replace('-', '–');
-const TYPE_LABEL: Record<string, string> = { color: 'color', letter: 'ABC', number: '123', icon: 'icon', handed: 'handed' };
+const TYPE_LABEL: Record<string, string> = { color: 'color', letter: 'ABC', number: '123', icon: 'icon', handed: 'handed', media: 'icon', arrow: 'arrow', shaped: 'shaped' };
 const tl = (t: string) => TYPE_LABEL[t] ?? t;
 const ic = { size: 18, weight: 'light' as const };
 
@@ -83,7 +83,7 @@ export default function Configurator({ scheme, onChange, appearance, onAppearanc
       <DualRow icon={<SquaresFour {...ic} />}>
         <Field label="Bin type">
           <select value={scheme.binType} onChange={e => set({ binType: e.target.value as Scheme['binType'] })}>
-            {['letter', 'number', 'handed'].map(t => <option key={t} value={t}>{tl(t)}</option>)}
+            {['letter', 'number', 'handed', 'media', 'arrow', 'shaped'].map(t => <option key={t} value={t}>{tl(t)}</option>)}
           </select>
         </Field>
         <Field label="Bins / section">

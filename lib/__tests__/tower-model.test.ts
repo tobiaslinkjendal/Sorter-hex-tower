@@ -29,7 +29,7 @@ describe('addressOf', () => {
     const t = buildTower(s, seededRng(2));
     const addr = addressOf(t, { column: 0, rowFromTop: 1, leftRank: 1 });
     // column ids run A→F, so physical column 0 displays as 'F'
-    expect(addr.segments.map(x => x.value ?? x.kind)).toEqual(['1','1','F']);
+    expect(addr.segments.map(x => ('value' in x ? x.value : x.kind))).toEqual(['1','1','F']);
   });
 });
 

@@ -18,7 +18,9 @@ export interface Summary {
 
 function displayString(tower: Tower, bin: Bin): string {
   return addressOf(tower, bin).segments
-    .map(s => (s.kind === 'color' ? `#${s.value.slice(1)}` : s.value)).join(' · ');
+    .map(s => s.kind === 'color' ? `#${s.value.slice(1)}`
+      : s.kind === 'icon' || s.kind === 'shape' ? s.pos
+        : s.value).join(' · ');
 }
 
 export function createRound(tower: Tower, durationMs: number, rng: RNG, nowMs: number): Round {

@@ -51,6 +51,9 @@ function placeholderSegments(s: Scheme): Segment[] {
     if (type === 'color') return { kind: 'color', value: '#FFBCCD' };
     if (type === 'number') return { kind: 'text', value: '0' };
     if (type === 'icon') return { kind: 'text', value: '?' };
+    if (type === 'media') return { kind: 'icon', set: 'media', pos: 'WAIT' };
+    if (type === 'arrow') return { kind: 'icon', set: 'arrow', pos: 'WAIT' };
+    if (type === 'shaped') return { kind: 'shape', pos: 'M' };
     return { kind: 'text', value: 'x' }; // letter / handed
   };
   const map: Record<string, string> = { column: s.columnType, layer: s.layerType, bin: s.binType };

@@ -14,30 +14,31 @@ describe('handedLabel', () => {
   });
 });
 
+const V = (x: { kind: string }) => (x as { value?: string }).value;
 describe('segments respect type + direction', () => {
   const s = defaultScheme();
   it('column color segment returns a hex color (ids run A→F, so the index is reversed)', () => {
     const seg = columnSegment({ ...s, columnType: 'color' }, 0);
     expect(seg.kind).toBe('color');
-    expect(seg.value).toBe(COLORS[5]);
+    expect(V(seg)).toBe(COLORS[5]);
   });
   it('layer number honors layerFrom=bottom', () => {
     const top = layerSegment({ ...s, layerType: 'number', layerFrom: 'top' }, 1, 5);
     const bot = layerSegment({ ...s, layerType: 'number', layerFrom: 'bottom' }, 1, 5);
-    expect(top.value).toBe('1');
-    expect(bot.value).toBe('5');
+    expect(V(top)).toBe('1');
+    expect(V(bot)).toBe('5');
   });
   it('bin letter honors binFrom=right', () => {
     const left = binSegment({ ...s, binType: 'letter', binFrom: 'left' }, 1, 3);
     const right = binSegment({ ...s, binType: 'letter', binFrom: 'right' }, 1, 3);
-    expect(left.value).toBe('A');
-    expect(right.value).toBe('C');
+    expect(V(left)).toBe('A');
+    expect(V(right)).toBe('C');
   });
   it('bin handed ignores binFrom (absolute position)', () => {
     const a = binSegment({ ...s, binType: 'handed', binFrom: 'left' }, 1, 3);
     const b = binSegment({ ...s, binType: 'handed', binFrom: 'right' }, 1, 3);
-    expect(a.value).toBe('L');
-    expect(b.value).toBe('L');
+    expect(V(a)).toBe('L');
+    expect(V(b)).toBe('L');
   });
 });
 
